@@ -11,9 +11,10 @@ interface ComposerProps {
   onStop: () => void
   streaming: boolean
   disabled: boolean
+  placeholder?: string
 }
 
-export function Composer({ onSend, onStop, streaming, disabled }: ComposerProps) {
+export function Composer({ onSend, onStop, streaming, disabled, placeholder }: ComposerProps) {
   const [value, setValue] = useState("")
   const canSend = !disabled && !streaming && value.trim() !== ""
 
@@ -42,7 +43,7 @@ export function Composer({ onSend, onStop, streaming, disabled }: ComposerProps)
             submit()
           }
         }}
-        placeholder={disabled ? "No model available" : "Ask the Netherbrain…"}
+        placeholder={placeholder ?? (disabled ? "No model available" : "Ask the Netherbrain…")}
         disabled={disabled}
         rows={1}
         aria-label="Message"
