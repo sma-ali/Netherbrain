@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **RAG, discuter avec ses documents**.
+Développement en cours. Jalon actuel : **projets, rattacher un dossier de code aux conversations**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -23,13 +23,16 @@ Développement en cours. Jalon actuel : **RAG, discuter avec ses documents**.
 - [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques et historique
 - [x] Catalogue des modèles : filtres, tris et mesures réelles faites sur votre installation
 - [x] RAG : discuter avec vos documents (PDF, texte, Markdown), réponses citant leurs sources
+- [x] Projets, façon Claude Code : un dossier de code par projet, avec ses conversations et ses consignes (AGENTS.md)
+- [ ] Agent de code : le modèle lit et modifie les fichiers du projet, avec votre accord
 
 ## Architecture
 
 ```
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
-                                        └──SQLAlchemy──> PostgreSQL + pgvector (historique, documents)
+                                        ├──SQLAlchemy──> PostgreSQL + pgvector (historique, documents)
+                                        └──lecture seule──> dossier de travail (~/Projects : les projets)
 ```
 
 | Dossier     | Stack                                                                            |
@@ -137,6 +140,29 @@ npm run lint                 # ESLint
 npm run build                # build de production + vérification des types
 ```
 
+## Projets
+
+Comme dans Claude Code, un projet est un **dossier de code** auquel on rattache des
+conversations. La barre latérale du chat regroupe les conversations par projet ; l'en-tête
+affiche le dossier, la branche Git en cours et le fichier de consignes du projet.
+
+Dans une conversation de projet, le modèle reçoit en message système le nom du projet, le
+contenu de la racine de son dossier et ses consignes : le fichier `AGENTS.md` (format ouvert,
+partagé par plusieurs outils de code) ou, à défaut, `CLAUDE.md`.
+
+Les projets sont choisis dans un **dossier de travail**, `~/Projects` par défaut
+(`NETHERBRAIN_WORKSPACE_ROOT`). L'API n'accède jamais à rien en dehors : les chemins reçus
+sont résolus (`..`, liens symboliques compris) puis vérifiés, et le dossier de travail entier
+ne peut pas devenir un projet. Supprimer un projet garde ses conversations et ne touche jamais
+au dossier.
+
+Avec Docker, le dossier de travail est monté dans le conteneur de l'API sur `/workspace`
+(variable `NETHERBRAIN_WORKSPACE`, `~/Projects` par défaut) :
+
+```bash
+NETHERBRAIN_WORKSPACE=~/code docker compose up --build
+```
+
 ## Discuter avec ses documents (RAG)
 
 Importez des PDF, fichiers texte ou Markdown sur la page `/documents`, puis activez
@@ -186,10 +212,15 @@ propres champs à la liste standard au format OpenAI.
 | GET     | `/api/models` | Modèles de tous les fournisseurs, et disponibilité de chacun |
 | POST    | `/api/chat`   | Streame une réponse sans rien enregistrer                    |
 | GET     | `/api/conversations` | Conversations, de la plus récemment active à la plus ancienne |
-| POST    | `/api/conversations` | Crée une conversation                                  |
+| POST    | `/api/conversations` | Crée une conversation (`{project_id}` facultatif)      |
 | GET     | `/api/conversations/{id}` | Une conversation et ses messages                  |
 | DELETE  | `/api/conversations/{id}` | Supprime une conversation et ses messages         |
 | POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse |
+| GET     | `/api/projects` | Projets, par ordre alphabétique (dossier, branche Git, consignes) |
+| POST    | `/api/projects` | Crée un projet à partir d'un dossier (`{path, name}`)   |
+| GET     | `/api/projects/{id}` | Un projet                                          |
+| DELETE  | `/api/projects/{id}` | Oublie un projet (ses conversations et son dossier restent) |
+| GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier de travail, pour choisir un projet |
 | GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
 | GET     | `/api/documents` | Documents importés et leur statut d'indexation           |
 | POST    | `/api/documents` | Importe un fichier (202 : indexation en tâche de fond)   |
