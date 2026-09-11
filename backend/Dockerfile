@@ -38,4 +38,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
 
-CMD ["uvicorn", "netherbrain.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Au démarrage : appliquer les migrations, puis lancer l'API. « exec » remplace le shell par
+# uvicorn, qui reçoit alors directement les signaux d'arrêt envoyés par `docker stop`.
+CMD ["sh", "-c", "python -m netherbrain.db.migrate && exec uvicorn netherbrain.main:app --host 0.0.0.0 --port 8000"]
