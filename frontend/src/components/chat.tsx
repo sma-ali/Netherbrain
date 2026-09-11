@@ -1,22 +1,24 @@
 "use client"
 
-import { BrainCircuit, RotateCw, SquarePen, Swords } from "lucide-react"
-import Link from "next/link"
+import { BrainCircuit, RotateCw, SquarePen } from "lucide-react"
+import { useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 
+import { AppNav } from "@/components/app-nav"
 import { Composer } from "@/components/composer"
+import { HistoryList } from "@/components/history-list"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
 import { Sidebar } from "@/components/sidebar"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { useChat } from "@/hooks/use-chat"
-import { useConversations } from "@/hooks/use-conversations"
 import { useModels } from "@/hooks/use-models"
-import { modelKey, type ProviderStatus } from "@/lib/api"
+import { useSavedList } from "@/hooks/use-saved-list"
+import { deleteConversation, listConversations, modelKey, type ProviderStatus } from "@/lib/api"
 
 export function Chat() {
   const models = useModels()
-  const conversations = useConversations()
+  const conversations = useSavedList(listConversations, deleteConversation)
   // On enregistre tant que l'historique répond. S'il est indisponible, le chat continue
   // de fonctionner sans rien enregistrer (dégradation gracieuse).
   const { conversationId, messages, status, send, stop, open, reset } = useChat({
@@ -24,7 +26,9 @@ export function Chat() {
     onSaved: conversations.refresh,
   })
 
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const searchParams = useSearchParams()
+  // Le catalogue peut présélectionner un modèle via l'URL : /?model=ollama/qwen3:8b
+  const [selectedKey, setSelectedKey] = useState<string | null>(() => searchParams.get("model"))
   // État dérivé : on prend le premier modèle (les locaux sont en tête) tant que l'utilisateur
   // n'en a pas choisi un.
   const model =
@@ -58,31 +62,23 @@ export function Chat() {
 
   return (
     <div className="flex h-dvh">
-      <Sidebar
-        conversations={conversations.conversations}
-        status={conversations.status}
-        activeId={conversationId}
-        onSelect={open}
-        onNew={reset}
-        onDelete={handleDelete}
-      />
+      <Sidebar>
+        <HistoryList
+          items={conversations.items.map((c) => ({ id: c.id, title: c.title ?? "Untitled" }))}
+          status={conversations.status}
+          activeId={conversationId}
+          onSelect={open}
+          onNew={reset}
+          onDelete={handleDelete}
+          newLabel="New chat"
+          emptyLabel="No conversations yet."
+        />
+      </Sidebar>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b px-4 py-2.5">
-          {/* Sur petit écran, la barre latérale est masquée : on garde le nom ici. */}
-          <div className="flex items-center gap-2 font-semibold tracking-tight md:hidden">
-            <BrainCircuit className="size-5 text-primary" />
-            Netherbrain
-          </div>
+          <AppNav compact className="md:hidden" />
           <div className="ml-auto flex items-center gap-2">
-            {/* Sur petit écran, le lien de la barre latérale n'est pas visible. */}
-            <Link
-              href="/compare"
-              aria-label="Compare models"
-              className={buttonVariants({ variant: "ghost", size: "icon", className: "md:hidden" })}
-            >
-              <Swords />
-            </Link>
             <ModelPicker
               models={models.models}
               providers={models.providers}

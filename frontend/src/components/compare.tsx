@@ -1,17 +1,20 @@
 "use client"
 
-import { ArrowLeft, Swords, Trophy, X } from "lucide-react"
-import Link from "next/link"
+import { Swords, Trophy, X } from "lucide-react"
+import { useSearchParams } from "next/navigation"
 import { useState } from "react"
 
+import { AppNav } from "@/components/app-nav"
 import { Composer } from "@/components/composer"
+import { HistoryList } from "@/components/history-list"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
+import { Sidebar } from "@/components/sidebar"
 import { Badge } from "@/components/ui/badge"
-import { buttonVariants } from "@/components/ui/button"
 import { useComparison, type Contender, type ContenderState } from "@/hooks/use-comparison"
 import { useModels } from "@/hooks/use-models"
-import { modelKey, type ModelInfo } from "@/lib/api"
+import { useSavedList } from "@/hooks/use-saved-list"
+import { deleteComparison, listComparisons, modelKey, type ModelInfo } from "@/lib/api"
 import { findBest } from "@/lib/compare"
 import { formatSeconds } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -20,9 +23,20 @@ const MAX_MODELS = 4
 
 export function Compare() {
   const models = useModels()
-  const { prompt, contenders, running, run, stop } = useComparison()
-  // null : l'utilisateur n'a encore rien choisi, on propose les deux premiers modèles.
-  const [chosenKeys, setChosenKeys] = useState<string[] | null>(null)
+  const comparisons = useSavedList(listComparisons, deleteComparison)
+  const { comparisonId, prompt, contenders, running, error, run, stop, open, reset } =
+    useComparison({
+      persist: comparisons.status !== "error",
+      onSaved: comparisons.refresh,
+    })
+
+  const searchParams = useSearchParams()
+  // Les modèles peuvent venir de l'URL (sélection faite dans le catalogue). Sinon null :
+  // l'utilisateur n'a encore rien choisi, on propose les deux premiers modèles.
+  const [chosenKeys, setChosenKeys] = useState<string[] | null>(() => {
+    const fromUrl = searchParams.getAll("model")
+    return fromUrl.length > 0 ? fromUrl.slice(0, MAX_MODELS) : null
+  })
 
   const selectedKeys = chosenKeys ?? models.models.slice(0, 2).map(modelKey)
   const selected = selectedKeys
@@ -33,93 +47,121 @@ export function Compare() {
   const add = (key: string) => setChosenKeys([...selectedKeys, key])
   const remove = (key: string) => setChosenKeys(selectedKeys.filter((k) => k !== key))
 
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Delete this comparison?")) return
+    try {
+      await comparisons.remove(id)
+      if (id === comparisonId) reset()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2.5">
-        <Link href="/" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-          <ArrowLeft />
-          Chat
-        </Link>
-        <div className="flex items-center gap-2 font-semibold tracking-tight">
-          <Swords className="size-5 text-primary" />
-          Compare models
-        </div>
-      </header>
-
-      <section className="border-b px-4 py-3">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
-          {selected.map((model) => (
-            <span
-              key={modelKey(model)}
-              className="flex items-center gap-1.5 rounded-lg border bg-card py-1 pr-1 pl-2.5 font-mono text-xs"
-            >
-              {model.id}
-              <span className="text-muted-foreground">{model.provider}</span>
-              <button
-                type="button"
-                onClick={() => remove(modelKey(model))}
-                disabled={running}
-                aria-label={`Remove ${model.id}`}
-                className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
-              >
-                <X className="size-3.5" />
-              </button>
-            </span>
-          ))}
-          {selected.length < MAX_MODELS && (
-            <ModelPicker
-              models={models.models.filter((model) => !selectedKeys.includes(modelKey(model)))}
-              providers={models.providers}
-              value={null}
-              onChange={add}
-              loading={models.status === "loading"}
-              disabled={running}
-              placeholder="Add a model…"
-            />
-          )}
-        </div>
-      </section>
-
-      <main className="flex-1 overflow-y-auto">
-        {contenders.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 px-4 pt-[16vh] text-center">
-            <Swords className="size-12 text-primary" strokeWidth={1.5} />
-            <h1 className="text-2xl font-semibold tracking-tight">One question, several minds.</h1>
-            <p className="max-w-md text-sm text-muted-foreground">
-              Pick two to four models and compare their answers and speed. Local models run one
-              at a time, since they share your GPU.
-            </p>
-          </div>
-        ) : (
-          <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
-            <p className="max-w-[85%] self-end rounded-2xl bg-secondary px-4 py-2.5 whitespace-pre-wrap">
-              {prompt}
-            </p>
-            <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))]">
-              {contenders.map((contender) => (
-                <ContenderColumn
-                  key={contender.key}
-                  contender={contender}
-                  local={localProviders.has(contender.model.provider)}
-                />
-              ))}
-            </div>
-            {!running && <Summary contenders={contenders} />}
-          </div>
-        )}
-      </main>
-
-      <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
-        <Composer
-          onSend={(text) => run(text, selected, localProviders)}
-          onStop={stop}
-          streaming={running}
-          disabled={selected.length < 2}
-          placeholder={
-            selected.length < 2 ? "Pick at least two models" : "Ask all the selected models…"
-          }
+    <div className="flex h-dvh">
+      <Sidebar>
+        <HistoryList
+          items={comparisons.items.map((c) => ({
+            id: c.id,
+            title: c.prompt,
+            subtitle: c.models.join(" · "),
+          }))}
+          status={comparisons.status}
+          activeId={comparisonId}
+          onSelect={open}
+          onNew={reset}
+          onDelete={handleDelete}
+          newLabel="New comparison"
+          emptyLabel="No comparisons yet."
         />
-      </footer>
+      </Sidebar>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-3 border-b px-4 py-2.5">
+          <AppNav compact className="md:hidden" />
+          <div className="flex items-center gap-2 font-semibold tracking-tight">
+            <Swords className="size-5 text-primary" />
+            Compare models
+          </div>
+        </header>
+
+        <section className="border-b px-4 py-3">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
+            {selected.map((model) => (
+              <span
+                key={modelKey(model)}
+                className="flex items-center gap-1.5 rounded-lg border bg-card py-1 pr-1 pl-2.5 font-mono text-xs"
+              >
+                {model.id}
+                <span className="text-muted-foreground">{model.provider}</span>
+                <button
+                  type="button"
+                  onClick={() => remove(modelKey(model))}
+                  disabled={running}
+                  aria-label={`Remove ${model.id}`}
+                  className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </span>
+            ))}
+            {selected.length < MAX_MODELS && (
+              <ModelPicker
+                models={models.models.filter((model) => !selectedKeys.includes(modelKey(model)))}
+                providers={models.providers}
+                value={null}
+                onChange={add}
+                loading={models.status === "loading"}
+                disabled={running}
+                placeholder="Add a model…"
+              />
+            )}
+          </div>
+        </section>
+
+        <main className="flex-1 overflow-y-auto">
+          {error ? (
+            <p className="px-4 pt-[16vh] text-center text-sm text-destructive">{error}</p>
+          ) : contenders.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 px-4 pt-[16vh] text-center">
+              <Swords className="size-12 text-primary" strokeWidth={1.5} />
+              <h1 className="text-2xl font-semibold tracking-tight">One question, several minds.</h1>
+              <p className="max-w-md text-sm text-muted-foreground">
+                Pick two to four models and compare their answers and speed. Local models run
+                one at a time, since they share your GPU.
+              </p>
+            </div>
+          ) : (
+            <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
+              <p className="max-w-[85%] self-end rounded-2xl bg-secondary px-4 py-2.5 whitespace-pre-wrap">
+                {prompt}
+              </p>
+              <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))]">
+                {contenders.map((contender) => (
+                  <ContenderColumn
+                    key={contender.key}
+                    contender={contender}
+                    local={localProviders.has(contender.model.provider)}
+                  />
+                ))}
+              </div>
+              {!running && <Summary contenders={contenders} localProviders={localProviders} />}
+            </div>
+          )}
+        </main>
+
+        <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
+          <Composer
+            onSend={(text) => run(text, selected, localProviders)}
+            onStop={stop}
+            streaming={running}
+            disabled={selected.length < 2}
+            placeholder={
+              selected.length < 2 ? "Pick at least two models" : "Ask all the selected models…"
+            }
+          />
+        </footer>
+      </div>
     </div>
   )
 }
@@ -160,11 +202,17 @@ function ContenderColumn({ contender, local }: { contender: Contender; local: bo
   )
 }
 
-function Summary({ contenders }: { contenders: Contender[] }) {
+function Summary({
+  contenders,
+  localProviders,
+}: {
+  contenders: Contender[]
+  localProviders: Set<string>
+}) {
   const results = contenders.map((c) => ({ key: c.key, metrics: c.message.metrics }))
   if (results.filter((r) => r.metrics).length < 2) return null
   const best = findBest(results)
-  const hasLocal = contenders.some((c) => c.model.provider === "ollama")
+  const hasLocal = contenders.some((c) => localProviders.has(c.model.provider))
 
   return (
     <section className="flex flex-col gap-2">
@@ -186,14 +234,22 @@ function Summary({ contenders }: { contenders: Contender[] }) {
                 <td className="px-3 py-2 font-mono text-xs">
                   {model.id} <span className="text-muted-foreground">{model.provider}</span>
                 </td>
-                <MetricCell value={metrics?.ttft_ms} format={formatSeconds} best={best.ttft_ms === key} />
+                <MetricCell
+                  value={metrics?.ttft_ms}
+                  format={formatSeconds}
+                  best={best.ttft_ms === key}
+                />
                 <MetricCell
                   value={metrics?.tokens_per_second}
                   format={(v) => `${v} tok/s`}
                   best={best.tokens_per_second === key}
                 />
                 <MetricCell value={metrics?.completion_tokens} format={String} best={false} />
-                <MetricCell value={metrics?.total_ms} format={formatSeconds} best={best.total_ms === key} />
+                <MetricCell
+                  value={metrics?.total_ms}
+                  format={formatSeconds}
+                  best={best.total_ms === key}
+                />
               </tr>
             ))}
           </tbody>
