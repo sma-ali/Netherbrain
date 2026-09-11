@@ -9,15 +9,25 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from netherbrain.api.deps import DbSession, Registry, SessionFactory, get_provider_or_404
-from netherbrain.api.streaming import StreamResult, sse_response, stream_answer
+from netherbrain.api.deps import (
+    DbSession,
+    EmbedderDep,
+    Registry,
+    SessionFactory,
+    SettingsDep,
+    get_provider_or_404,
+)
+from netherbrain.api.streaming import StreamResult, sse, sse_response, stream_answer
 from netherbrain.db.models import Conversation
-from netherbrain.db.repository import ConversationRepository, make_title
+from netherbrain.db.repository import ConversationRepository, DocumentRepository, make_title
+from netherbrain.rag.prompt import build_context
+from netherbrain.rag.retrieval import find_sources
 from netherbrain.schemas import (
     ChatMessage,
     ConversationDetail,
     ConversationSummary,
     SendMessageRequest,
+    Source,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,11 +78,14 @@ async def send_message(
     registry: Registry,
     session: DbSession,
     session_factory: SessionFactory,
+    embedder: EmbedderDep,
+    settings: SettingsDep,
 ) -> StreamingResponse:
     """Enregistre le message de l'utilisateur, puis streame et enregistre la réponse du modèle.
 
     Le serveur reconstitue lui-même l'historique depuis la base : le client n'envoie que
-    le nouveau message.
+    le nouveau message. Avec `use_documents`, les extraits de documents les plus proches
+    de la question sont ajoutés au prompt (RAG) et renvoyés comme sources.
     """
     repository = ConversationRepository(session)
     conversation = await get_or_404(repository, conversation_id)
@@ -83,6 +96,17 @@ async def send_message(
     ]
     history.append(ChatMessage(role="user", content=request.content))
 
+    sources: list[Source] = []
+    warning: str | None = None
+    if request.use_documents:
+        sources, warning = await find_sources(
+            request.content, embedder, DocumentRepository(session), settings.rag_top_k
+        )
+    if sources:
+        # Les extraits passent en message « système », en tête de l'historique : ils guident
+        # la réponse sans apparaître dans la conversation affichée.
+        history.insert(0, ChatMessage(role="system", content=build_context(sources)))
+
     if conversation.title is None:
         conversation.title = make_title(request.content)
     await repository.add_message(conversation_id, role="user", content=request.content)
@@ -91,6 +115,12 @@ async def send_message(
     async def event_stream() -> AsyncIterator[str]:
         result = StreamResult()
         try:
+            if request.use_documents:
+                # Les sources partent en premier : l'interface les affiche avant la réponse.
+                yield sse(
+                    "sources",
+                    {"sources": [s.model_dump(mode="json") for s in sources], "warning": warning},
+                )
             async for chunk in stream_answer(provider, request.model, history, result):
                 yield chunk
         finally:
@@ -98,7 +128,7 @@ async def send_message(
             # fermé), on enregistre ce qui a déjà été généré. Le « shield » protège cette
             # écriture de l'annulation que déclenche la déconnexion.
             with anyio.CancelScope(shield=True):
-                await save_answer(session_factory, conversation_id, request, result)
+                await save_answer(session_factory, conversation_id, request, result, sources)
 
     return sse_response(event_stream())
 
@@ -108,6 +138,7 @@ async def save_answer(
     conversation_id: uuid.UUID,
     request: SendMessageRequest,
     result: StreamResult,
+    sources: list[Source],
 ) -> None:
     # Une session neuve : celle de la requête a pu être fermée pendant le stream.
     try:
@@ -122,6 +153,7 @@ async def save_answer(
                 metrics=result.metrics,
                 error=result.error,
                 stopped=not result.finished and result.error is None,
+                sources=[s.model_dump(mode="json") for s in sources] or None,
             )
             await session.commit()
     except SQLAlchemyError, OSError:

@@ -87,6 +87,17 @@ class ConversationSummary(BaseModel):
     updated_at: datetime
 
 
+class Source(BaseModel):
+    """Un extrait de document retrouvé pour répondre (RAG)."""
+
+    document_id: uuid.UUID
+    document_name: str
+    page: int | None = None
+    content: str
+    # Similarité cosinus avec la question : proche de 1 = même sens.
+    score: float
+
+
 class StoredMessage(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,6 +110,7 @@ class StoredMessage(BaseModel):
     metrics: dict[str, Any] | None = None
     error: str | None = None
     stopped: bool = False
+    sources: list[Source] | None = None
     created_at: datetime
 
 
@@ -110,6 +122,25 @@ class SendMessageRequest(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     content: str = Field(min_length=1)
+    # Chercher dans les documents importés et s'appuyer sur eux pour répondre (RAG).
+    use_documents: bool = False
+
+
+# --- Documents (RAG) ---
+
+
+class DocumentInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    content_type: str
+    size_bytes: int
+    # processing : indexation en cours ; ready : utilisable ; error : voir `error`.
+    status: Literal["processing", "ready", "error"]
+    error: str | None = None
+    chunk_count: int
+    created_at: datetime
 
 
 # --- Comparaisons enregistrées ---

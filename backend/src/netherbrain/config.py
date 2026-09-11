@@ -26,6 +26,19 @@ class Settings(BaseSettings):
     # Délai max accordé à chaque fournisseur par /api/models avant de le déclarer indisponible.
     provider_list_timeout: float = 5.0
 
+    # --- RAG : discuter avec ses documents ---
+    # Modèle d'embeddings servi par Ollama. Il doit produire des vecteurs de 768 dimensions,
+    # la taille de la colonne en base.
+    embedding_model: str = "nomic-embed-text"
+    # nomic-embed-text attend un préfixe qui indique le rôle du texte : document ou question.
+    embedding_document_prefix: str = "search_document: "
+    embedding_query_prefix: str = "search_query: "
+    # Nombre d'extraits ajoutés au prompt, et découpage des documents (en caractères).
+    rag_top_k: int = 5
+    chunk_size: int = 1200
+    chunk_overlap: int = 200
+    max_upload_mb: int = 20
+
     cors_origins: list[str] = ["http://localhost:3000"]
 
 

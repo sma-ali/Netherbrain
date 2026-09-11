@@ -1,22 +1,26 @@
 import asyncio
 import json
 import os
+import re
+import zlib
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
-from netherbrain.api.deps import get_registry, get_session_factory
-from netherbrain.db.models import Base
+from netherbrain.api.deps import get_embedder, get_registry, get_session_factory
+from netherbrain.db.models import EMBEDDING_DIMENSIONS, Base
+from netherbrain.db.session import enable_pgvector
 from netherbrain.main import app
 from netherbrain.providers import ProviderError, ProviderRegistry
+from netherbrain.rag.embeddings import EmbeddingError
 from netherbrain.schemas import ChatMessage, ModelCard, StreamEvent
 
 # Par défaut, les tests tournent sur SQLite en mémoire : rapide, rien à installer.
-# La CI les relance sur un vrai PostgreSQL en définissant cette variable.
+# La CI les relance sur un vrai PostgreSQL (avec pgvector) en définissant cette variable.
 TEST_DATABASE_URL = os.environ.get("NETHERBRAIN_TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 
@@ -63,10 +67,37 @@ class FakeProvider:
             raise ProviderError(f"{self.name}: connection lost")
 
 
+class FakeEmbedder:
+    """Des vecteurs calculés sans modèle, en « sac de mots » : chaque mot allume une case.
+
+    Deux textes qui partagent des mots ont donc des vecteurs proches : suffisant pour
+    vérifier que la recherche remonte le bon document, sans GPU ni réseau.
+    """
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector(t) for t in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        return self._vector(text)
+
+    def _vector(self, content: str) -> list[float]:
+        if self.fail:
+            raise EmbeddingError("fake embedding model unreachable")
+        vector = [0.0] * EMBEDDING_DIMENSIONS
+        for word in re.findall(r"\w+", content.lower()):
+            vector[zlib.crc32(word.encode()) % EMBEDDING_DIMENSIONS] += 1.0
+        return vector
+
+
 def make_test_engine(url: str) -> AsyncEngine:
     if not url.startswith("sqlite"):
         # NullPool : aucune connexion gardée entre deux tests (chacun a sa boucle d'événements).
-        return create_async_engine(url, poolclass=NullPool)
+        engine = create_async_engine(url, poolclass=NullPool)
+        enable_pgvector(engine)
+        return engine
 
     # StaticPool : une seule connexion partagée. Sinon chaque connexion ouvrirait
     # sa propre base en mémoire… vide.
@@ -86,6 +117,8 @@ def make_test_engine(url: str) -> AsyncEngine:
 
 async def create_schema(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
+        if connection.dialect.name == "postgresql":
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.run_sync(Base.metadata.create_all)
 
 
@@ -119,6 +152,17 @@ def use_providers():
         registry = ProviderRegistry(list(providers), list_timeout=list_timeout)
         app.dependency_overrides[get_registry] = lambda: registry
         return registry
+
+    return install
+
+
+@pytest.fixture
+def use_embedder():
+    """Remplace le modèle d'embeddings (Ollama) par un faux pendant le test en cours."""
+
+    def install(embedder: FakeEmbedder) -> FakeEmbedder:
+        app.dependency_overrides[get_embedder] = lambda: embedder
+        return embedder
 
     return install
 

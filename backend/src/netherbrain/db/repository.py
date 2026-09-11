@@ -8,8 +8,18 @@ from sqlalchemy import Select, delete, func, select, union_all, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from netherbrain.db.models import Comparison, ComparisonResult, Conversation, Message, utcnow
-from netherbrain.schemas import ModelStats
+from netherbrain.db.models import (
+    Comparison,
+    ComparisonResult,
+    Conversation,
+    Document,
+    DocumentChunk,
+    Message,
+    utcnow,
+)
+from netherbrain.rag.chunking import Chunk
+from netherbrain.rag.embeddings import cosine_similarity
+from netherbrain.schemas import ModelStats, Source
 
 
 class ConversationRepository:
@@ -132,6 +142,86 @@ class ComparisonRepository:
         await self._session.execute(
             update(ComparisonResult).where(ComparisonResult.id == result_id).values(**fields)
         )
+
+
+class DocumentRepository:
+    """Les documents importés et leurs morceaux ; comme ailleurs, sans commit()."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_recent(self) -> Sequence[Document]:
+        result = await self._session.scalars(select(Document).order_by(Document.created_at.desc()))
+        return result.all()
+
+    async def create(self, name: str, content_type: str, size_bytes: int) -> Document:
+        document = Document(name=name, content_type=content_type, size_bytes=size_bytes)
+        self._session.add(document)
+        await self._session.flush()
+        return document
+
+    async def delete(self, document_id: uuid.UUID) -> bool:
+        """Supprime un document ; la base supprime ses morceaux (ON DELETE CASCADE)."""
+        result = await self._session.execute(delete(Document).where(Document.id == document_id))
+        return result.rowcount > 0
+
+    async def mark(self, document_id: uuid.UUID, **fields: Any) -> None:
+        await self._session.execute(
+            update(Document).where(Document.id == document_id).values(**fields)
+        )
+
+    async def add_chunks(
+        self, document_id: uuid.UUID, chunks: list[Chunk], embeddings: list[list[float]]
+    ) -> None:
+        self._session.add_all(
+            DocumentChunk(
+                document_id=document_id,
+                position=position,
+                page=chunk.page,
+                content=chunk.content,
+                embedding=embedding,
+            )
+            for position, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True))
+        )
+        await self._session.flush()
+
+    async def search(self, embedding: list[float], limit: int) -> list[Source]:
+        """Les morceaux dont le sens est le plus proche de la question (documents prêts)."""
+        ready_chunks = (
+            select(
+                DocumentChunk.document_id, Document.name, DocumentChunk.page, DocumentChunk.content
+            )
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(Document.status == "ready")
+        )
+        connection = await self._session.connection()
+
+        if connection.dialect.name == "postgresql":
+            # pgvector : distance cosinus (opérateur <=>), accélérée par l'index HNSW.
+            distance = DocumentChunk.embedding.cosine_distance(embedding)
+            rows = await self._session.execute(
+                ready_chunks.add_columns(1 - distance).order_by(distance).limit(limit)
+            )
+            return [_source(*row) for row in rows]
+
+        # Sans pgvector (SQLite des tests), on compare en Python. Le résultat est le même,
+        # mais on lit tous les morceaux, là où l'index de PostgreSQL n'en visite qu'une partie.
+        rows = await self._session.execute(ready_chunks.add_columns(DocumentChunk.embedding))
+        scored = [(*row[:4], cosine_similarity(embedding, row[4])) for row in rows]
+        scored.sort(key=lambda row: row[4], reverse=True)
+        return [_source(*row) for row in scored[:limit]]
+
+
+def _source(
+    document_id: uuid.UUID, document_name: str, page: int | None, content: str, score: float
+) -> Source:
+    return Source(
+        document_id=document_id,
+        document_name=document_name,
+        page=page,
+        content=content,
+        score=round(float(score), 3),
+    )
 
 
 def _measures(table: type[Message] | type[ComparisonResult]) -> Select:

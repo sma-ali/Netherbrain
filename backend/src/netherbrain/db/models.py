@@ -4,9 +4,14 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, false
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# Taille des vecteurs d'embeddings, celle de nomic-embed-text. Changer de modèle pour un
+# modèle d'une autre taille demande une migration (la colonne est typée vector(768)).
+EMBEDDING_DIMENSIONS = 768
 
 
 def utcnow() -> datetime:
@@ -58,6 +63,10 @@ class Message(Base):
     )
     error: Mapped[str | None] = mapped_column(Text)
     stopped: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # Extraits de documents utilisés pour répondre (RAG), avec leur provenance.
+    sources: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages", lazy="raise")
@@ -106,3 +115,53 @@ class ComparisonResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     comparison: Mapped[Comparison] = relationship(back_populates="results", lazy="raise")
+
+
+class Document(Base):
+    """Un document importé par l'utilisateur, découpé en morceaux pour le RAG."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int]
+    # processing (indexation en cours), ready, ou error.
+    status: Mapped[str] = mapped_column(
+        String(16), default="processing", server_default="processing"
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    chunk_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
+class DocumentChunk(Base):
+    """Un morceau de document et son vecteur : ce que retrouve la recherche."""
+
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        # Index HNSW (un graphe de voisins) : retrouve les vecteurs les plus proches sans
+        # comparer la question à chaque morceau. vector_cosine_ops : distance cosinus.
+        Index(
+            "ix_document_chunks_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int]
+    # Page d'origine (PDF), pour pouvoir la citer.
+    page: Mapped[int | None]
+    content: Mapped[str] = mapped_column(Text)
+    # Type vector de pgvector sous PostgreSQL ; simple liste JSON sous SQLite (tests).
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS).with_variant(JSON(), "sqlite")
+    )

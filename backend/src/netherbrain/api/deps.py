@@ -14,6 +14,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from netherbrain.config import Settings, get_settings
+from netherbrain.db.models import EMBEDDING_DIMENSIONS
 from netherbrain.db.session import create_engine
 from netherbrain.providers import (
     LLMProvider,
@@ -23,6 +24,7 @@ from netherbrain.providers import (
     UnknownProviderError,
 )
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
+from netherbrain.rag.embeddings import Embedder, OllamaEmbedder
 
 # En-têtes d'attribution facultatifs : ils identifient l'application sur openrouter.ai.
 OPENROUTER_HEADERS = {
@@ -105,3 +107,23 @@ async def get_session(factory: SessionFactory) -> AsyncIterator[AsyncSession]:
 
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
+
+
+# --- Configuration et RAG ---
+
+SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+
+@lru_cache
+def get_embedder() -> Embedder:
+    settings = get_settings()
+    return OllamaEmbedder(
+        settings.ollama_base_url,
+        settings.embedding_model,
+        document_prefix=settings.embedding_document_prefix,
+        query_prefix=settings.embedding_query_prefix,
+        dimensions=EMBEDDING_DIMENSIONS,
+    )
+
+
+EmbedderDep = Annotated[Embedder, Depends(get_embedder)]
