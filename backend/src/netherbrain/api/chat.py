@@ -19,7 +19,8 @@ async def list_models(registry: Registry) -> ModelsResponse:
     return ModelsResponse(
         models=[ModelInfo(id=model, provider=r.name) for r in results for model in r.models],
         providers=[
-            ProviderStatus(name=r.name, available=r.error is None, error=r.error) for r in results
+            ProviderStatus(name=r.name, local=r.local, available=r.error is None, error=r.error)
+            for r in results
         ],
     )
 

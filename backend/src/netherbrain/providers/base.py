@@ -16,6 +16,8 @@ class LLMProvider(Protocol):
     """
 
     name: str
+    # True si les modèles tournent sur cette machine : ils se partagent alors le même GPU.
+    local: bool
 
     async def list_models(self) -> list[str]: ...
 

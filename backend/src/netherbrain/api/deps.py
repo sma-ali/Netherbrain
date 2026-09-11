@@ -36,7 +36,7 @@ OPENROUTER_HEADERS = {
 def build_registry(settings: Settings) -> ProviderRegistry:
     """Ollama est toujours présent ; chaque fournisseur distant s'active avec sa clé d'API."""
     providers: list[LLMProvider] = [
-        OpenAICompatibleProvider("ollama", settings.ollama_base_url),
+        OpenAICompatibleProvider("ollama", settings.ollama_base_url, local=True),
     ]
     if key := _secret(settings.openrouter_api_key):
         providers.append(

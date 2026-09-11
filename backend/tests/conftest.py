@@ -30,8 +30,10 @@ class FakeProvider:
         events: list[StreamEvent] | None = None,
         fail: bool = False,
         list_delay: float = 0.0,
+        local: bool = False,
     ) -> None:
         self.name = name
+        self.local = local
         self.models = models if models is not None else [f"{name}-model"]
         self.events = events or []
         self.fail = fail
