@@ -2,6 +2,24 @@
 name: netherbrain
 
 services:
+  db:
+    image: pgvector/pgvector:pg18 # PostgreSQL + l'extension pgvector (pour le futur RAG)
+    environment:
+      POSTGRES_USER: netherbrain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netherbrain}
+      POSTGRES_DB: netherbrain
+    ports:
+      - "127.0.0.1:5432:5432" # pour lancer l'API hors de Docker pendant le développement
+    volumes:
+      # PostgreSQL 18 range ses données dans /var/lib/postgresql/18/… : on monte le dossier parent.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netherbrain -d netherbrain"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
@@ -10,10 +28,15 @@ services:
       - path: ./backend/.env # clés d'API des fournisseurs distants (facultatif)
         required: false
     environment:
+      # Dans le réseau de Compose, chaque service est joignable par son nom : ici « db ».
+      NETHERBRAIN_DATABASE_URL: postgresql+asyncpg://netherbrain:${POSTGRES_PASSWORD:-netherbrain}@db:5432/netherbrain
       # Dans un conteneur, « localhost » désigne le conteneur lui-même : Ollama tourne sur l'hôte.
       NETHERBRAIN_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
     extra_hosts:
       - "host.docker.internal:host-gateway" # intégré à Docker Desktop, nécessaire sous Linux
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -28,3 +51,7 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  # Volume nommé : les données survivent à `docker compose down` (mais pas à `down -v`).
+  pgdata:

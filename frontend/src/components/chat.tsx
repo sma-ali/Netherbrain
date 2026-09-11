@@ -6,14 +6,23 @@ import { useEffect, useRef, useState } from "react"
 import { Composer } from "@/components/composer"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
+import { Sidebar } from "@/components/sidebar"
 import { Button } from "@/components/ui/button"
 import { useChat } from "@/hooks/use-chat"
+import { useConversations } from "@/hooks/use-conversations"
 import { useModels } from "@/hooks/use-models"
 import { modelKey, type ProviderStatus } from "@/lib/api"
 
 export function Chat() {
-  const { messages, status, send, stop, reset } = useChat()
   const models = useModels()
+  const conversations = useConversations()
+  // On enregistre tant que l'historique répond. S'il est indisponible, le chat continue
+  // de fonctionner sans rien enregistrer (dégradation gracieuse).
+  const { conversationId, messages, status, send, stop, open, reset } = useChat({
+    persist: conversations.status !== "error",
+    onSaved: conversations.refresh,
+  })
+
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   // État dérivé : on prend le premier modèle (les locaux sont en tête) tant que l'utilisateur
   // n'en a pas choisi un.
@@ -34,66 +43,88 @@ export function Chat() {
     if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
   }
 
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Delete this conversation?")) return
+    try {
+      await conversations.remove(id)
+      if (id === conversationId) reset()
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const streaming = status === "streaming"
 
   return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2.5">
-        <div className="flex items-center gap-2 font-semibold tracking-tight">
-          <BrainCircuit className="size-5 text-primary" />
-          Netherbrain
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <ModelPicker
-            models={models.models}
-            providers={models.providers}
-            value={model ? modelKey(model) : null}
-            onChange={setSelectedKey}
-            loading={models.status === "loading"}
-            disabled={streaming}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={reset}
-            disabled={messages.length === 0}
-            aria-label="New chat"
-          >
-            <SquarePen />
-          </Button>
-        </div>
-      </header>
+    <div className="flex h-dvh">
+      <Sidebar
+        conversations={conversations.conversations}
+        status={conversations.status}
+        activeId={conversationId}
+        onSelect={open}
+        onNew={reset}
+        onDelete={handleDelete}
+      />
 
-      <main ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
-          {messages.length === 0 ? (
-            <EmptyState
-              error={models.error}
-              ready={models.status === "ready"}
-              hasModels={models.models.length > 0}
-              unavailable={models.providers.filter((p) => !p.available)}
-              onRetry={models.retry}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-3 border-b px-4 py-2.5">
+          {/* Sur petit écran, la barre latérale est masquée : on garde le nom ici. */}
+          <div className="flex items-center gap-2 font-semibold tracking-tight md:hidden">
+            <BrainCircuit className="size-5 text-primary" />
+            Netherbrain
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <ModelPicker
+              models={models.models}
+              providers={models.providers}
+              value={model ? modelKey(model) : null}
+              onChange={setSelectedKey}
+              loading={models.status === "loading"}
+              disabled={streaming}
             />
-          ) : (
-            messages.map((message, index) => (
-              <Message
-                key={message.id}
-                message={message}
-                streaming={streaming && index === messages.length - 1}
-              />
-            ))
-          )}
-        </div>
-      </main>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={reset}
+              disabled={messages.length === 0}
+              aria-label="New chat"
+            >
+              <SquarePen />
+            </Button>
+          </div>
+        </header>
 
-      <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
-        <Composer
-          onSend={(text) => model && send(text, model)}
-          onStop={stop}
-          streaming={streaming}
-          disabled={!model}
-        />
-      </footer>
+        <main ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
+            {messages.length === 0 ? (
+              <EmptyState
+                error={models.error}
+                ready={models.status === "ready"}
+                hasModels={models.models.length > 0}
+                unavailable={models.providers.filter((p) => !p.available)}
+                onRetry={models.retry}
+              />
+            ) : (
+              messages.map((message, index) => (
+                <Message
+                  key={message.id}
+                  message={message}
+                  streaming={streaming && index === messages.length - 1}
+                />
+              ))
+            )}
+          </div>
+        </main>
+
+        <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
+          <Composer
+            onSend={(text) => model && send(text, model)}
+            onStop={stop}
+            streaming={streaming}
+            disabled={!model}
+          />
+        </footer>
+      </div>
     </div>
   )
 }

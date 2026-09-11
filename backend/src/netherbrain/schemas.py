@@ -1,8 +1,10 @@
 """Contrats de données partagés par la couche API et les fournisseurs."""
 
-from typing import Literal
+import uuid
+from datetime import datetime
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
@@ -30,6 +32,44 @@ class ProviderStatus(BaseModel):
 class ModelsResponse(BaseModel):
     models: list[ModelInfo]
     providers: list[ProviderStatus]
+
+
+# --- Conversations enregistrées ---
+
+
+class ConversationSummary(BaseModel):
+    # from_attributes : ces schémas se construisent directement depuis les objets de l'ORM.
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class StoredMessage(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    role: Literal["user", "assistant"]
+    content: str
+    reasoning: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    metrics: dict[str, Any] | None = None
+    error: str | None = None
+    stopped: bool = False
+    created_at: datetime
+
+
+class ConversationDetail(ConversationSummary):
+    messages: list[StoredMessage]
+
+
+class SendMessageRequest(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    content: str = Field(min_length=1)
 
 
 # --- Événements émis par un fournisseur pendant qu'il streame une réponse ---

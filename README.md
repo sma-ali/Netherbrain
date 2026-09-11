@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **chat multi-fournisseur, conteneurisé**.
+Développement en cours. Jalon actuel : **historique des conversations**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -18,7 +18,8 @@ Développement en cours. Jalon actuel : **chat multi-fournisseur, conteneurisé*
 - [x] Interface de chat Next.js : choix du modèle, réponses en Markdown, réflexion repliable, bouton stop
 - [x] Plusieurs fournisseurs (Ollama, OpenRouter, Groq), avec dégradation gracieuse hors ligne
 - [x] Docker Compose (images multi-étapes, non-root) et CI GitHub Actions
-- [ ] Conversations persistantes (PostgreSQL) et authentification
+- [x] Conversations enregistrées dans PostgreSQL (migrations Alembic), réponse partielle conservée si on coupe
+- [ ] Authentification
 - [ ] Comparaison de modèles côte à côte
 - [ ] RAG sur vos propres documents
 
@@ -26,12 +27,14 @@ Développement en cours. Jalon actuel : **chat multi-fournisseur, conteneurisé*
 
 ```
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
-   (navigateur)                                                          └──> OpenRouter, Groq (optionnels)
+   (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
+                                        └──SQLAlchemy──> PostgreSQL (historique)
 ```
 
 | Dossier     | Stack                                                                            |
 |-------------|----------------------------------------------------------------------------------|
-| `backend/`  | Python 3.14, FastAPI, Pydantic, SDK OpenAI, uv, pytest, Ruff                     |
+| `backend/`  | Python 3.14, FastAPI, Pydantic, SQLAlchemy 2 (async), Alembic, SDK OpenAI, uv, pytest, Ruff |
+| base        | PostgreSQL 18 (image avec pgvector)                                              |
 | `frontend/` | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, shadcn/ui, Vitest |
 
 La couche API ne dépend que d'une interface `LLMProvider` : tous les backends qui parlent l'API
@@ -52,6 +55,10 @@ docker compose up --build
 
 Puis ouvrir <http://localhost:3000>.
 
+Les conversations sont stockées dans PostgreSQL, sur le volume `pgdata` : elles survivent aux
+redémarrages, mais `docker compose down -v` les efface. Les migrations s'appliquent
+automatiquement au démarrage de l'API.
+
 Le conteneur de l'API joint Ollama via `host.docker.internal`. Sous Linux, Ollama n'écoute par
 défaut que sur `127.0.0.1`, que les conteneurs ne peuvent pas joindre : définissez
 `OLLAMA_HOST=0.0.0.0` dans l'environnement du service Ollama. Si Ollama reste injoignable,
@@ -59,13 +66,15 @@ l'interface le signale comme indisponible et les fournisseurs distants continuen
 
 ### Sans Docker (développement)
 
-Prérequis : [uv](https://docs.astral.sh/uv/), Node.js 24+ et [Ollama](https://ollama.com) qui
-tourne avec au moins un modèle.
+Prérequis : [uv](https://docs.astral.sh/uv/), Node.js 24+, Docker (pour PostgreSQL) et
+[Ollama](https://ollama.com) qui tourne avec au moins un modèle.
 
 ```bash
-# Terminal 1 : API sur http://localhost:8000
+# Terminal 1 : la base (dans Docker), puis l'API sur http://localhost:8000
+docker compose up -d db      # seulement le service PostgreSQL
 cd backend
 uv sync                      # crée l'environnement virtuel et installe les dépendances
+uv run alembic upgrade head  # crée ou met à jour les tables
 uv run uvicorn netherbrain.main:app --reload
 ```
 
@@ -110,6 +119,16 @@ uv run ruff check .          # lint
 uv run ruff format .         # formatage
 ```
 
+Les tests utilisent SQLite en mémoire par défaut. La CI les relance sur un vrai PostgreSQL ;
+pour faire pareil en local, définissez `NETHERBRAIN_TEST_DATABASE_URL` (même format que
+`NETHERBRAIN_DATABASE_URL`, sur une base dédiée aux tests).
+
+Après une modification des modèles (`db/models.py`), générez la migration, puis relisez-la :
+
+```bash
+uv run alembic revision --autogenerate -m "description du changement"
+```
+
 ```bash
 cd frontend
 npm test                     # tests unitaires (Vitest)
@@ -123,8 +142,19 @@ npm run build                # build de production + vérification des types
 |---------|---------------|--------------------------------------------------------------|
 | GET     | `/api/health` | Sonde de vivacité                                            |
 | GET     | `/api/models` | Modèles de tous les fournisseurs, et disponibilité de chacun |
-| POST    | `/api/chat`   | Streame une réponse en Server-Sent Events                    |
+| POST    | `/api/chat`   | Streame une réponse sans rien enregistrer                    |
+| GET     | `/api/conversations` | Conversations, de la plus récemment active à la plus ancienne |
+| POST    | `/api/conversations` | Crée une conversation                                  |
+| GET     | `/api/conversations/{id}` | Une conversation et ses messages                  |
+| DELETE  | `/api/conversations/{id}` | Supprime une conversation et ses messages         |
+| POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse |
 
-`/api/chat` reçoit `{provider, model, messages}` et émet des événements `reasoning` et `token`,
-puis un événement final `done` portant les métriques (`ttft_ms`, `total_ms`,
-`tokens_per_second`...) ou un événement `error`.
+Les deux routes de streaming émettent des événements `reasoning` et `token`, puis un événement
+final `done` portant les métriques (`ttft_ms`, `total_ms`, `tokens_per_second`...) ou un
+événement `error`.
+
+- `/api/chat` reçoit toute la conversation (`{provider, model, messages}`) et n'enregistre rien.
+  L'interface s'en sert quand l'historique est indisponible.
+- `/api/conversations/{id}/messages` ne reçoit que le nouveau message (`{provider, model, content}`) :
+  le serveur reconstitue l'historique depuis la base. Si le client se déconnecte en pleine
+  réponse, ce qui a déjà été généré est tout de même enregistré.

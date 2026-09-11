@@ -7,9 +7,13 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.19.2",
+    "anyio>=4.15.1",
+    "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
     "openai>=3.13.0",
     "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.52.4",
 ]
 
@@ -22,6 +26,7 @@ module-name = "netherbrain"
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.16.7",

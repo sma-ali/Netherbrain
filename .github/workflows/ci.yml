@@ -21,6 +21,24 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Un vrai PostgreSQL pendant toute la durée du job : migrations et tests tournent dessus.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: netherbrain
+          POSTGRES_PASSWORD: netherbrain
+          POSTGRES_DB: netherbrain
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U netherbrain"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NETHERBRAIN_DATABASE_URL: postgresql+asyncpg://netherbrain:netherbrain@localhost:5432/netherbrain
+      NETHERBRAIN_TEST_DATABASE_URL: postgresql+asyncpg://netherbrain:netherbrain@localhost:5432/netherbrain
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -29,6 +47,8 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff format --check .
       - run: uv run ruff check .
+      - name: Migrations sur PostgreSQL
+        run: uv run python -m netherbrain.db.migrate
       - run: uv run pytest
 
   frontend:

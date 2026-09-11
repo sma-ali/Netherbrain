@@ -25,8 +25,12 @@ export function Message({ message, streaming }: { message: UIMessage; streaming:
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <BrainCircuit className="size-4 text-primary" />
-        <span className="font-mono">{message.model?.id}</span>
-        <span className="text-muted-foreground/70">via {message.model?.provider}</span>
+        {message.model && (
+          <>
+            <span className="font-mono">{message.model.id}</span>
+            <span className="text-muted-foreground/70">via {message.model.provider}</span>
+          </>
+        )}
       </div>
 
       {message.reasoning && <Reasoning text={message.reasoning} active={thinking} />}

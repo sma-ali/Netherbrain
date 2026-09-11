@@ -39,6 +39,30 @@ export type ChatEvent =
   | { type: "done"; metrics: ChatMetrics }
   | { type: "error"; message: string }
 
+export interface ConversationSummary {
+  id: string
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StoredMessage {
+  id: string
+  role: "user" | "assistant"
+  content: string
+  reasoning: string | null
+  provider: string | null
+  model: string | null
+  metrics: ChatMetrics | null
+  error: string | null
+  stopped: boolean
+  created_at: string
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: StoredMessage[]
+}
+
 /** Clé unique d'un modèle, tous fournisseurs confondus. Un nom de fournisseur ne contient jamais "/". */
 export const modelKey = (model: ModelInfo) => `${model.provider}/${model.id}`
 
@@ -47,12 +71,44 @@ export async function fetchModels(signal?: AbortSignal): Promise<ModelsResponse>
   return response.json()
 }
 
-/**
- * Envoie une conversation en POST et renvoie la réponse événement par événement.
- *
- * L'EventSource du navigateur ne gère que GET : le stream SSE est donc lu à la main
- * depuis le corps de la réponse de fetch.
- */
+// --- Conversations enregistrées ---
+
+export async function listConversations(signal?: AbortSignal): Promise<ConversationSummary[]> {
+  const response = await request("/api/conversations", { signal })
+  return response.json()
+}
+
+export async function createConversation(): Promise<ConversationSummary> {
+  const response = await request("/api/conversations", { method: "POST" })
+  return response.json()
+}
+
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  const response = await request(`/api/conversations/${id}`, {})
+  return response.json()
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await request(`/api/conversations/${id}`, { method: "DELETE" })
+}
+
+/** Envoie un message dans une conversation enregistrée : le serveur connaît déjà l'historique. */
+export async function* streamMessage(
+  conversationId: string,
+  model: ModelInfo,
+  content: string,
+  signal: AbortSignal,
+): AsyncGenerator<ChatEvent> {
+  const response = await request(`/api/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: model.provider, model: model.id, content }),
+    signal,
+  })
+  yield* readEvents(response)
+}
+
+/** Mode sans historique : envoie toute la conversation, rien n'est enregistré côté serveur. */
 export async function* streamChat(
   model: ModelInfo,
   messages: ChatMessage[],
@@ -64,6 +120,16 @@ export async function* streamChat(
     body: JSON.stringify({ provider: model.provider, model: model.id, messages }),
     signal,
   })
+  yield* readEvents(response)
+}
+
+/**
+ * Lit la réponse SSE et renvoie les événements un par un.
+ *
+ * L'EventSource du navigateur ne gère que GET : le stream SSE est donc lu à la main
+ * depuis le corps de la réponse de fetch.
+ */
+async function* readEvents(response: Response): AsyncGenerator<ChatEvent> {
   if (!response.body) throw new Error("The API returned an empty response")
 
   const parser = new SSEParser()
