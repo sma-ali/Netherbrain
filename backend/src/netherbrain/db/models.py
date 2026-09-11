@@ -61,3 +61,48 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages", lazy="raise")
+
+
+class Comparison(Base):
+    """La même question posée à plusieurs modèles."""
+
+    __tablename__ = "comparisons"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    prompt: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+    results: Mapped[list[ComparisonResult]] = relationship(
+        back_populates="comparison",
+        order_by="ComparisonResult.position",
+        lazy="raise",
+        passive_deletes=True,
+    )
+
+
+class ComparisonResult(Base):
+    """La réponse d'un des modèles d'une comparaison."""
+
+    __tablename__ = "comparison_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    comparison_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("comparisons.id", ondelete="CASCADE"), index=True
+    )
+    # Ordre d'affichage des colonnes, celui choisi par l'utilisateur.
+    position: Mapped[int]
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(200))
+    # pending (pas encore lancée), running (en cours), puis done, error ou stopped.
+    state: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    content: Mapped[str] = mapped_column(Text, default="", server_default="")
+    reasoning: Mapped[str | None] = mapped_column(Text)
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql")
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    comparison: Mapped[Comparison] = relationship(back_populates="results", lazy="raise")

@@ -1,12 +1,14 @@
 from netherbrain.providers.base import LLMProvider, ProviderError
+from netherbrain.providers.ollama import OllamaProvider
 from netherbrain.providers.openai_compatible import OpenAICompatibleProvider
-from netherbrain.providers.registry import ProviderModels, ProviderRegistry, UnknownProviderError
+from netherbrain.providers.registry import ProviderRegistry, ProviderResult, UnknownProviderError
 
 __all__ = [
     "LLMProvider",
+    "OllamaProvider",
     "OpenAICompatibleProvider",
     "ProviderError",
-    "ProviderModels",
     "ProviderRegistry",
+    "ProviderResult",
     "UnknownProviderError",
 ]

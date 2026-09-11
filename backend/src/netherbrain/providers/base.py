@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from typing import Protocol
 
-from netherbrain.schemas import ChatMessage, StreamEvent
+from netherbrain.schemas import ChatMessage, ModelCard, StreamEvent
 
 
 class ProviderError(Exception):
@@ -20,6 +20,8 @@ class LLMProvider(Protocol):
     local: bool
 
     async def list_models(self) -> list[str]: ...
+
+    async def describe_models(self) -> list[ModelCard]: ...
 
     def stream_chat(
         self, model: str, messages: list[ChatMessage]

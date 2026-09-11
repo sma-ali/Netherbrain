@@ -13,7 +13,7 @@ from netherbrain.api.deps import get_registry, get_session_factory
 from netherbrain.db.models import Base
 from netherbrain.main import app
 from netherbrain.providers import ProviderError, ProviderRegistry
-from netherbrain.schemas import ChatMessage, StreamEvent
+from netherbrain.schemas import ChatMessage, ModelCard, StreamEvent
 
 # Par défaut, les tests tournent sur SQLite en mémoire : rapide, rien à installer.
 # La CI les relance sur un vrai PostgreSQL en définissant cette variable.
@@ -46,6 +46,12 @@ class FakeProvider:
         if self.fail:
             raise ProviderError(f"{self.name}: unreachable")
         return self.models
+
+    async def describe_models(self) -> list[ModelCard]:
+        return [
+            ModelCard(id=model_id, provider=self.name, local=self.local, name=model_id)
+            for model_id in await self.list_models()
+        ]
 
     async def stream_chat(
         self, model: str, messages: list[ChatMessage]

@@ -17,6 +17,7 @@ from netherbrain.config import Settings, get_settings
 from netherbrain.db.session import create_engine
 from netherbrain.providers import (
     LLMProvider,
+    OllamaProvider,
     OpenAICompatibleProvider,
     ProviderRegistry,
     UnknownProviderError,
@@ -36,7 +37,7 @@ OPENROUTER_HEADERS = {
 def build_registry(settings: Settings) -> ProviderRegistry:
     """Ollama est toujours présent ; chaque fournisseur distant s'active avec sa clé d'API."""
     providers: list[LLMProvider] = [
-        OpenAICompatibleProvider("ollama", settings.ollama_base_url, local=True),
+        OllamaProvider(settings.ollama_base_url),
     ]
     if key := _secret(settings.openrouter_api_key):
         providers.append(

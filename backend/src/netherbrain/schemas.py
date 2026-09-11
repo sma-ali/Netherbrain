@@ -36,6 +36,44 @@ class ModelsResponse(BaseModel):
     providers: list[ProviderStatus]
 
 
+# --- Catalogue des modèles ---
+
+
+class ModelStats(BaseModel):
+    """Ce que Netherbrain a mesuré en utilisant un modèle sur cette installation."""
+
+    answers: int
+    avg_ttft_ms: float | None = None
+    avg_tokens_per_second: float | None = None
+
+
+class ModelCard(BaseModel):
+    """La fiche d'un modèle dans le catalogue."""
+
+    id: str
+    provider: str
+    local: bool = False
+    name: str
+    description: str | None = None
+    family: str | None = None
+    # Milliards de paramètres, quand on les connaît : la « taille » du modèle.
+    parameters_b: float | None = None
+    quantization: str | None = None
+    size_bytes: int | None = None
+    context_length: int | None = None
+    # Parmi : reasoning, tools, vision, code, embedding.
+    capabilities: list[str] = Field(default_factory=list)
+    free: bool | None = None
+    stats: ModelStats | None = None
+
+
+class CatalogResponse(BaseModel):
+    models: list[ModelCard]
+    providers: list[ProviderStatus]
+    # False si la base est indisponible : les fiches s'affichent quand même, sans les mesures.
+    stats_available: bool = True
+
+
 # --- Conversations enregistrées ---
 
 
@@ -72,6 +110,52 @@ class SendMessageRequest(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     content: str = Field(min_length=1)
+
+
+# --- Comparaisons enregistrées ---
+
+# pending : pas encore lancée ; running : en cours ; puis done, error ou stopped.
+ResultState = Literal["pending", "running", "done", "error", "stopped"]
+
+
+class Contender(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+
+
+class CreateComparisonRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    contenders: list[Contender] = Field(min_length=2, max_length=4)
+
+
+class ComparisonResultOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    position: int
+    provider: str
+    model: str
+    state: ResultState
+    content: str
+    reasoning: str | None = None
+    metrics: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class ComparisonSummary(BaseModel):
+    id: uuid.UUID
+    prompt: str
+    created_at: datetime
+    models: list[str]
+
+
+class ComparisonDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    prompt: str
+    created_at: datetime
+    results: list[ComparisonResultOut]
 
 
 # --- Événements émis par un fournisseur pendant qu'il streame une réponse ---

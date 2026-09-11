@@ -1,11 +1,21 @@
+from typing import Any
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from netherbrain.api.deps import Registry, get_provider_or_404
 from netherbrain.api.streaming import StreamResult, sse_response, stream_answer
+from netherbrain.providers import ProviderResult
 from netherbrain.schemas import ChatRequest, ModelInfo, ModelsResponse, ProviderStatus
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+
+def provider_statuses(results: list[ProviderResult[Any]]) -> list[ProviderStatus]:
+    return [
+        ProviderStatus(name=r.name, local=r.local, available=r.error is None, error=r.error)
+        for r in results
+    ]
 
 
 @router.get("/models")
@@ -17,11 +27,8 @@ async def list_models(registry: Registry) -> ModelsResponse:
     """
     results = await registry.list_all()
     return ModelsResponse(
-        models=[ModelInfo(id=model, provider=r.name) for r in results for model in r.models],
-        providers=[
-            ProviderStatus(name=r.name, local=r.local, available=r.error is None, error=r.error)
-            for r in results
-        ],
+        models=[ModelInfo(id=model, provider=r.name) for r in results for model in r.items],
+        providers=provider_statuses(results),
     )
 
 
