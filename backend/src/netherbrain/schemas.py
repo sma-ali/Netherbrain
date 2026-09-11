@@ -11,6 +11,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     messages: list[ChatMessage] = Field(min_length=1)
 
@@ -18,6 +19,17 @@ class ChatRequest(BaseModel):
 class ModelInfo(BaseModel):
     id: str
     provider: str
+
+
+class ProviderStatus(BaseModel):
+    name: str
+    available: bool
+    error: str | None = None
+
+
+class ModelsResponse(BaseModel):
+    models: list[ModelInfo]
+    providers: list[ProviderStatus]
 
 
 # --- Events yielded by a provider while it streams an answer ---
