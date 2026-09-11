@@ -1,6 +1,6 @@
 "use client"
 
-import { LayoutGrid, MessageSquare, Swords } from "lucide-react"
+import { FileText, LayoutGrid, MessageSquare, Swords } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/", label: "Chat", icon: MessageSquare },
   { href: "/compare", label: "Compare", icon: Swords },
   { href: "/models", label: "Models", icon: LayoutGrid },
+  { href: "/documents", label: "Documents", icon: FileText },
 ]
 
 /**

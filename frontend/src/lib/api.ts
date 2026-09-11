@@ -35,7 +35,18 @@ export interface ChatMetrics {
   tokens_per_second?: number | null
 }
 
+/** Un extrait de document retrouvé pour répondre (RAG). */
+export interface Source {
+  document_id: string
+  document_name: string
+  page: number | null
+  content: string
+  // Similarité cosinus avec la question : proche de 1 = même sens.
+  score: number
+}
+
 export type ChatEvent =
+  | { type: "sources"; sources: Source[]; warning: string | null }
   | { type: "reasoning"; content: string }
   | { type: "token"; content: string }
   | { type: "done"; metrics: ChatMetrics }
@@ -91,6 +102,7 @@ export interface StoredMessage {
   metrics: ChatMetrics | null
   error: string | null
   stopped: boolean
+  sources: Source[] | null
   created_at: string
 }
 
@@ -128,6 +140,20 @@ export interface ComparisonDetail {
   results: ComparisonResultData[]
 }
 
+// --- Documents (RAG) ---
+
+export interface DocumentInfo {
+  id: string
+  name: string
+  content_type: string
+  size_bytes: number
+  // processing : indexation en cours ; ready : utilisable ; error : voir `error`.
+  status: "processing" | "ready" | "error"
+  error: string | null
+  chunk_count: number
+  created_at: string
+}
+
 /** Clé unique d'un modèle, tous fournisseurs confondus. Un nom de fournisseur ne contient jamais "/". */
 export const modelKey = (model: ModelInfo) => `${model.provider}/${model.id}`
 
@@ -162,17 +188,26 @@ export async function deleteConversation(id: string): Promise<void> {
   await request(`/api/conversations/${id}`, { method: "DELETE" })
 }
 
-/** Envoie un message dans une conversation enregistrée : le serveur connaît déjà l'historique. */
+/**
+ * Envoie un message dans une conversation enregistrée : le serveur connaît déjà l'historique.
+ * `useDocuments` : le serveur cherche dans les documents importés et s'en sert (RAG).
+ */
 export async function* streamMessage(
   conversationId: string,
   model: ModelInfo,
   content: string,
   signal: AbortSignal,
+  useDocuments = false,
 ): AsyncGenerator<ChatEvent> {
   const response = await request(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider: model.provider, model: model.id, content }),
+    body: JSON.stringify({
+      provider: model.provider,
+      model: model.id,
+      content,
+      use_documents: useDocuments,
+    }),
     signal,
   })
   yield* readEvents(response)
@@ -222,6 +257,27 @@ export async function* streamComparisonResult(
   yield* readEvents(response)
 }
 
+// --- Documents ---
+
+export async function listDocuments(signal?: AbortSignal): Promise<DocumentInfo[]> {
+  const response = await request("/api/documents", { signal })
+  return response.json()
+}
+
+/** Envoie un fichier ; le serveur répond tout de suite et l'indexe en tâche de fond. */
+export async function uploadDocument(file: File): Promise<DocumentInfo> {
+  const body = new FormData()
+  body.append("file", file)
+  // Pas d'en-tête Content-Type : le navigateur l'écrit lui-même, avec la « boundary »
+  // qui sépare les parties du formulaire.
+  const response = await request("/api/documents", { method: "POST", body })
+  return response.json()
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await request(`/api/documents/${id}`, { method: "DELETE" })
+}
+
 // --- Mode sans historique ---
 
 /** Envoie toute la conversation ; rien n'est enregistré côté serveur. */
@@ -268,6 +324,8 @@ async function* readEvents(response: Response): AsyncGenerator<ChatEvent> {
 function toChatEvent({ event, data }: SSEMessage): ChatEvent | null {
   const payload = JSON.parse(data)
   switch (event) {
+    case "sources":
+      return { type: "sources", sources: payload.sources, warning: payload.warning ?? null }
     case "reasoning":
     case "token":
       return { type: event, content: payload.content }

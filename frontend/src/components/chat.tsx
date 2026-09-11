@@ -1,6 +1,6 @@
 "use client"
 
-import { BrainCircuit, RotateCw, SquarePen } from "lucide-react"
+import { BookOpen, BrainCircuit, RotateCw, SquarePen } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 
@@ -14,7 +14,15 @@ import { Button } from "@/components/ui/button"
 import { useChat } from "@/hooks/use-chat"
 import { useModels } from "@/hooks/use-models"
 import { useSavedList } from "@/hooks/use-saved-list"
-import { deleteConversation, listConversations, modelKey, type ProviderStatus } from "@/lib/api"
+import {
+  deleteConversation,
+  deleteDocument,
+  listConversations,
+  listDocuments,
+  modelKey,
+  type ProviderStatus,
+} from "@/lib/api"
+import { cn } from "@/lib/utils"
 
 export function Chat() {
   const models = useModels()
@@ -25,6 +33,12 @@ export function Chat() {
     persist: conversations.status !== "error",
     onSaved: conversations.refresh,
   })
+
+  const documents = useSavedList(listDocuments, deleteDocument)
+  const readyDocuments = documents.items.filter((d) => d.status === "ready").length
+  const [useDocuments, setUseDocuments] = useState(false)
+  // Le RAG n'a de sens qu'avec l'historique (côté serveur) et au moins un document prêt.
+  const canUseDocuments = conversations.status !== "error" && readyDocuments > 0
 
   const searchParams = useSearchParams()
   // Le catalogue peut présélectionner un modèle via l'URL : /?model=ollama/qwen3:8b
@@ -122,8 +136,32 @@ export function Chat() {
         </main>
 
         <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
+          <div className="mb-2 flex">
+            <button
+              type="button"
+              aria-pressed={useDocuments && canUseDocuments}
+              disabled={!canUseDocuments}
+              onClick={() => setUseDocuments((value) => !value)}
+              title={
+                canUseDocuments
+                  ? "Answer from your documents, with citations"
+                  : "Import documents first, on the Documents page"
+              }
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                useDocuments &&
+                  canUseDocuments &&
+                  "border-primary bg-primary/15 text-primary hover:bg-primary/20",
+              )}
+            >
+              <BookOpen className="size-3.5" />
+              Use my documents{readyDocuments > 0 && ` (${readyDocuments})`}
+            </button>
+          </div>
           <Composer
-            onSend={(text) => model && send(text, model)}
+            onSend={(text) =>
+              model && send(text, model, { useDocuments: useDocuments && canUseDocuments })
+            }
             onStop={stop}
             streaming={streaming}
             disabled={!model}

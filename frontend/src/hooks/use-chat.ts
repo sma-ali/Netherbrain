@@ -8,6 +8,7 @@ import {
   type ChatEvent,
   type ChatMetrics,
   type ModelInfo,
+  type Source,
   type StoredMessage,
 } from "@/lib/api"
 
@@ -20,6 +21,9 @@ export interface UIMessage {
   metrics?: ChatMetrics
   error?: string
   stopped?: boolean
+  // Extraits de documents utilisés pour répondre (RAG), et avertissement éventuel.
+  sources?: Source[]
+  sourcesWarning?: string
 }
 
 export type ChatStatus = "idle" | "streaming"
@@ -29,6 +33,11 @@ interface UseChatOptions {
   persist: boolean
   /** Appelé quand une conversation a été créée ou modifiée côté serveur. */
   onSaved: () => void
+}
+
+interface SendOptions {
+  /** S'appuyer sur les documents importés (RAG) ; uniquement avec l'historique. */
+  useDocuments?: boolean
 }
 
 /** La conversation affichée : ses messages, l'envoi et l'arrêt d'une réponse streamée. */
@@ -42,7 +51,7 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
   const requestedRef = useRef<string | null>(null)
 
   const send = useCallback(
-    async (content: string, model: ModelInfo) => {
+    async (content: string, model: ModelInfo, { useDocuments = false }: SendOptions = {}) => {
       const userMessage: UIMessage = { id: crypto.randomUUID(), role: "user", content }
       const assistantId = crypto.randomUUID()
 
@@ -74,7 +83,7 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
             setConversationId(id)
             onSaved()
           }
-          events = streamMessage(id, model, content, controller.signal)
+          events = streamMessage(id, model, content, controller.signal, useDocuments)
         } else {
           // Sans historique côté serveur, toute la conversation part à chaque requête
           // (les API de LLM sont sans état).
@@ -86,6 +95,12 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
 
         for await (const event of events) {
           switch (event.type) {
+            case "sources":
+              patchAnswer(() => ({
+                sources: event.sources,
+                sourcesWarning: event.warning ?? undefined,
+              }))
+              break
             case "reasoning":
               patchAnswer((m) => ({ reasoning: (m.reasoning ?? "") + event.content }))
               break
@@ -155,5 +170,6 @@ function toUIMessage(message: StoredMessage): UIMessage {
     metrics: message.metrics ?? undefined,
     error: message.error ?? undefined,
     stopped: message.stopped,
+    sources: message.sources ?? undefined,
   }
 }
