@@ -25,6 +25,8 @@ class ModelInfo(BaseModel):
 
 class ProviderStatus(BaseModel):
     name: str
+    # Modèles exécutés sur cette machine : ils se partagent le GPU.
+    local: bool = False
     available: bool
     error: str | None = None
 

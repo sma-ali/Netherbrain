@@ -1,13 +1,14 @@
 "use client"
 
-import { BrainCircuit, RotateCw, SquarePen } from "lucide-react"
+import { BrainCircuit, RotateCw, SquarePen, Swords } from "lucide-react"
+import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 
 import { Composer } from "@/components/composer"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
 import { Sidebar } from "@/components/sidebar"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { useChat } from "@/hooks/use-chat"
 import { useConversations } from "@/hooks/use-conversations"
 import { useModels } from "@/hooks/use-models"
@@ -74,6 +75,14 @@ export function Chat() {
             Netherbrain
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {/* Sur petit écran, le lien de la barre latérale n'est pas visible. */}
+            <Link
+              href="/compare"
+              aria-label="Compare models"
+              className={buttonVariants({ variant: "ghost", size: "icon", className: "md:hidden" })}
+            >
+              <Swords />
+            </Link>
             <ModelPicker
               models={models.models}
               providers={models.providers}

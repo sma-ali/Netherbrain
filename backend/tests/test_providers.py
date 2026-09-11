@@ -1,8 +1,17 @@
+import httpx
+import openai
 import pytest
 
 from netherbrain.api.deps import build_registry
 from netherbrain.config import Settings
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
+from netherbrain.providers.openai_compatible import describe_error
+
+REQUEST = httpx.Request("POST", "http://provider.test/v1/chat/completions")
+
+
+def status_error(error_class, status: int, body: dict) -> openai.APIStatusError:
+    return error_class("raw message", response=httpx.Response(status, request=REQUEST), body=body)
 
 
 def make_settings(**overrides) -> Settings:
@@ -18,6 +27,13 @@ def test_remote_providers_are_enabled_by_their_api_key():
     settings = make_settings(openrouter_api_key="sk-or-test", groq_api_key="gsk-test")
 
     assert build_registry(settings).names == ["ollama", "openrouter", "groq"]
+
+
+def test_only_ollama_runs_locally():
+    registry = build_registry(make_settings(openrouter_api_key="sk-or-test"))
+
+    assert registry.get("ollama").local is True
+    assert registry.get("openrouter").local is False
 
 
 def test_an_empty_api_key_leaves_the_provider_disabled():
@@ -55,3 +71,27 @@ def test_openrouter_free_filter(model_id, expected):
 )
 def test_groq_chat_filter(model_id, expected):
     assert is_groq_chat_model(model_id) is expected
+
+
+def test_a_rate_limit_gets_a_short_explanation_without_account_details():
+    body = {
+        "error": {"message": "Provider returned error", "metadata": {"raw": "a very long text"}},
+        "user_id": "user_123",
+    }
+
+    message = describe_error(status_error(openai.RateLimitError, 429, body))
+
+    assert "rate limit" in message
+    assert "user_123" not in message
+
+
+def test_an_http_error_keeps_only_the_provider_message():
+    body = {"error": {"message": "model 'nope' not found", "type": "not_found_error"}}
+
+    message = describe_error(status_error(openai.NotFoundError, 404, body))
+
+    assert message == "HTTP 404: model 'nope' not found"
+
+
+def test_a_network_error_is_described_plainly():
+    assert describe_error(openai.APIConnectionError(request=REQUEST)) == "Connection error."

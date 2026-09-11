@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **historique des conversations**.
+Développement en cours. Jalon actuel : **comparaison de modèles**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -20,7 +20,7 @@ Développement en cours. Jalon actuel : **historique des conversations**.
 - [x] Docker Compose (images multi-étapes, non-root) et CI GitHub Actions
 - [x] Conversations enregistrées dans PostgreSQL (migrations Alembic), réponse partielle conservée si on coupe
 - [ ] Authentification
-- [ ] Comparaison de modèles côte à côte
+- [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques
 - [ ] RAG sur vos propres documents
 
 ## Architecture
@@ -135,6 +135,16 @@ npm test                     # tests unitaires (Vitest)
 npm run lint                 # ESLint
 npm run build                # build de production + vérification des types
 ```
+
+## Comparer des modèles
+
+La page `/compare` pose la même question à 2 à 4 modèles et affiche leurs réponses côte à côte,
+puis un tableau des métriques (délai avant le premier token, vitesse, temps total) où le meilleur
+de chaque colonne est mis en avant.
+
+Les modèles distants sont interrogés en parallèle. Les modèles locaux, eux, passent un par un :
+ils partagent le même GPU, et les lancer ensemble saturerait la VRAM et fausserait les mesures.
+Le délai avant le premier token d'un modèle local inclut son chargement en VRAM.
 
 ## API
 

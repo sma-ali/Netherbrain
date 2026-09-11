@@ -34,9 +34,17 @@ def test_a_failing_provider_does_not_hide_the_others(client, use_providers):
     body = response.json()
     assert body["models"] == [{"id": "local-model", "provider": "local"}]
     assert body["providers"] == [
-        {"name": "local", "available": True, "error": None},
-        {"name": "remote", "available": False, "error": "remote: unreachable"},
+        {"name": "local", "local": False, "available": True, "error": None},
+        {"name": "remote", "local": False, "available": False, "error": "remote: unreachable"},
     ]
+
+
+def test_local_providers_are_flagged(client, use_providers):
+    use_providers(FakeProvider("gpu", local=True), FakeProvider("cloud"))
+
+    providers = client.get("/api/models").json()["providers"]
+
+    assert {p["name"]: p["local"] for p in providers} == {"gpu": True, "cloud": False}
 
 
 def test_a_slow_provider_is_marked_unavailable(client, use_providers):

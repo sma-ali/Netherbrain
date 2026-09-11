@@ -1,8 +1,9 @@
 "use client"
 
-import { BrainCircuit, Plus, Trash2 } from "lucide-react"
+import { BrainCircuit, Plus, Swords, Trash2 } from "lucide-react"
+import Link from "next/link"
 
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import type { ConversationSummary } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -30,11 +31,19 @@ export function Sidebar({
         <BrainCircuit className="size-5 text-primary" />
         Netherbrain
       </div>
-      <div className="px-3 pb-2">
+      <div className="flex flex-col gap-1 px-3 pb-2">
         <Button variant="outline" className="w-full justify-start" onClick={onNew}>
           <Plus />
           New chat
         </Button>
+        {/* <Link> précharge la page en arrière-plan : la navigation est instantanée. */}
+        <Link
+          href="/compare"
+          className={buttonVariants({ variant: "ghost", className: "w-full justify-start" })}
+        >
+          <Swords />
+          Compare models
+        </Link>
       </div>
 
       <nav aria-label="Conversations" className="flex-1 overflow-y-auto px-2 pb-4">

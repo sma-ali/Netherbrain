@@ -16,6 +16,8 @@ export interface ModelInfo {
 
 export interface ProviderStatus {
   name: string
+  // Modèles exécutés sur la machine de l'utilisateur : ils se partagent le GPU.
+  local: boolean
   available: boolean
   error: string | null
 }

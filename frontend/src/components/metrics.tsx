@@ -2,13 +2,12 @@
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { ChatMetrics } from "@/lib/api"
-
-const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`
+import { formatSeconds } from "@/lib/format"
 
 export function Metrics({ metrics }: { metrics: ChatMetrics }) {
   const items = [
     metrics.ttft_ms != null && {
-      label: `TTFT ${seconds(metrics.ttft_ms)}`,
+      label: `TTFT ${formatSeconds(metrics.ttft_ms)}`,
       hint: "Time to first token: how long before the model starts answering (includes loading it into VRAM).",
     },
     metrics.tokens_per_second != null && {
@@ -19,7 +18,7 @@ export function Metrics({ metrics }: { metrics: ChatMetrics }) {
       label: `${metrics.completion_tokens} tokens`,
       hint: `Tokens generated, reasoning included. Prompt: ${metrics.prompt_tokens ?? "?"} tokens.`,
     },
-    { label: seconds(metrics.total_ms), hint: "Total response time." },
+    { label: formatSeconds(metrics.total_ms), hint: "Total response time." },
   ].filter((item) => item !== false)
 
   return (

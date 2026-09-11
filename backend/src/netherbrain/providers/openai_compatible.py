@@ -7,6 +7,22 @@ from netherbrain.providers.base import ProviderError
 from netherbrain.schemas import ChatMessage, ReasoningEvent, StreamEvent, TokenEvent, UsageEvent
 
 
+def describe_error(exc: openai.APIError) -> str:
+    """Un message d'erreur court et lisible, sans le corps JSON complet du fournisseur.
+
+    Ce message est affiché dans l'interface et enregistré en base : le corps brut, lui,
+    peut être très long et contenir des informations sur le compte (identifiant, etc.).
+    """
+    if isinstance(exc, openai.RateLimitError):
+        return "rate limit reached, retry in a moment or pick another model"
+    if isinstance(exc, openai.APIStatusError):
+        error = exc.body.get("error") if isinstance(exc.body, dict) else None
+        detail = error.get("message") if isinstance(error, dict) else None
+        return f"HTTP {exc.status_code}: {detail}" if detail else f"HTTP {exc.status_code}"
+    # Erreurs réseau : « Connection error. », « Request timed out. »
+    return exc.message
+
+
 class OpenAICompatibleProvider:
     """N'importe quel backend qui parle l'API Chat Completions d'OpenAI.
 
@@ -23,8 +39,10 @@ class OpenAICompatibleProvider:
         model_filter: Callable[[str], bool] | None = None,
         default_headers: dict[str, str] | None = None,
         timeout: float = 60.0,
+        local: bool = False,
     ) -> None:
         self.name = name
+        self.local = local
         self._model_filter = model_filter
         self._client = AsyncOpenAI(
             base_url=base_url,
@@ -38,7 +56,7 @@ class OpenAICompatibleProvider:
         try:
             page = await self._client.models.list()
         except openai.APIError as exc:
-            raise ProviderError(f"{self.name}: {exc}") from exc
+            raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc
         return sorted(
             model.id
             for model in page.data
@@ -69,4 +87,4 @@ class OpenAICompatibleProvider:
                     if choice.delta.content:
                         yield TokenEvent(content=choice.delta.content)
         except openai.APIError as exc:
-            raise ProviderError(f"{self.name}: {exc}") from exc
+            raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc

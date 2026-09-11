@@ -21,6 +21,8 @@ interface ModelPickerProps {
   onChange: (key: string) => void
   loading: boolean
   disabled: boolean
+  /** Texte affiché quand aucun modèle n'est sélectionné. */
+  placeholder?: string
 }
 
 export function ModelPicker({
@@ -30,6 +32,7 @@ export function ModelPicker({
   onChange,
   loading,
   disabled,
+  placeholder = "No model",
 }: ModelPickerProps) {
   const selected = models.find((model) => modelKey(model) === value)
 
@@ -43,7 +46,7 @@ export function ModelPicker({
     >
       <SelectTrigger size="sm" aria-label="Model" className="max-w-72 min-w-44 font-mono text-xs">
         <span className="truncate">
-          {selected ? selected.id : loading ? "Loading models…" : "No model"}
+          {selected ? selected.id : loading ? "Loading models…" : placeholder}
         </span>
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} align="end" className="min-w-72">

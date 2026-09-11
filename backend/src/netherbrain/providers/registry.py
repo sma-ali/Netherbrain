@@ -13,6 +13,7 @@ class ProviderModels:
     """Le résultat de la demande de modèles à un fournisseur."""
 
     name: str
+    local: bool = False
     models: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -43,11 +44,12 @@ class ProviderRegistry:
         return await asyncio.gather(*(self._list_one(p) for p in self._providers.values()))
 
     async def _list_one(self, provider: LLMProvider) -> ProviderModels:
+        outcome = ProviderModels(provider.name, local=provider.local)
         try:
             async with asyncio.timeout(self._list_timeout):
-                models = await provider.list_models()
+                outcome.models = await provider.list_models()
         except TimeoutError:
-            return ProviderModels(provider.name, error=f"no answer after {self._list_timeout:g}s")
+            outcome.error = f"no answer after {self._list_timeout:g}s"
         except ProviderError as exc:
-            return ProviderModels(provider.name, error=str(exc))
-        return ProviderModels(provider.name, models=models)
+            outcome.error = str(exc)
+        return outcome

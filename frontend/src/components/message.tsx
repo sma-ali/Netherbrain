@@ -8,7 +8,14 @@ import { Metrics } from "@/components/metrics"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import type { UIMessage } from "@/hooks/use-chat"
 
-export function Message({ message, streaming }: { message: UIMessage; streaming: boolean }) {
+interface MessageProps {
+  message: UIMessage
+  streaming: boolean
+  /** Afficher le modèle au-dessus de la réponse (inutile quand une colonne le montre déjà). */
+  showModel?: boolean
+}
+
+export function Message({ message, streaming, showModel = true }: MessageProps) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -23,15 +30,17 @@ export function Message({ message, streaming }: { message: UIMessage; streaming:
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <BrainCircuit className="size-4 text-primary" />
-        {message.model && (
-          <>
-            <span className="font-mono">{message.model.id}</span>
-            <span className="text-muted-foreground/70">via {message.model.provider}</span>
-          </>
-        )}
-      </div>
+      {showModel && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <BrainCircuit className="size-4 text-primary" />
+          {message.model && (
+            <>
+              <span className="font-mono">{message.model.id}</span>
+              <span className="text-muted-foreground/70">via {message.model.provider}</span>
+            </>
+          )}
+        </div>
+      )}
 
       {message.reasoning && <Reasoning text={message.reasoning} active={thinking} />}
 
