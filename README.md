@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **catalogue des modèles**.
+Développement en cours. Jalon actuel : **RAG, discuter avec ses documents**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -22,14 +22,14 @@ Développement en cours. Jalon actuel : **catalogue des modèles**.
 - [ ] Authentification
 - [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques et historique
 - [x] Catalogue des modèles : filtres, tris et mesures réelles faites sur votre installation
-- [ ] RAG sur vos propres documents
+- [x] RAG : discuter avec vos documents (PDF, texte, Markdown), réponses citant leurs sources
 
 ## Architecture
 
 ```
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
-                                        └──SQLAlchemy──> PostgreSQL (historique)
+                                        └──SQLAlchemy──> PostgreSQL + pgvector (historique, documents)
 ```
 
 | Dossier     | Stack                                                                            |
@@ -137,6 +137,23 @@ npm run lint                 # ESLint
 npm run build                # build de production + vérification des types
 ```
 
+## Discuter avec ses documents (RAG)
+
+Importez des PDF, fichiers texte ou Markdown sur la page `/documents`, puis activez
+« Use my documents » dans le chat : le modèle répond à partir des passages les plus
+pertinents et les cite ([1], [2]…), sources consultables sous la réponse.
+
+```
+Import :   fichier → texte (page par page) → morceaux de ~1 200 caractères qui se chevauchent
+           → un vecteur par morceau (nomic-embed-text, via Ollama) → PostgreSQL + pgvector
+Question : vecteur de la question → 5 morceaux les plus proches (distance cosinus, index HNSW)
+           → ajoutés au prompt en message système → réponse sourcée
+```
+
+Prérequis : le modèle d'embeddings, à installer une fois avec `ollama pull nomic-embed-text`.
+L'indexation se fait en tâche de fond ; si le modèle d'embeddings est indisponible au moment
+d'une question, la réponse arrive quand même, sans les documents, avec un avertissement.
+
 ## Comparer des modèles
 
 La page `/compare` pose la même question à 2 à 4 modèles et affiche leurs réponses côte à côte,
@@ -174,6 +191,9 @@ propres champs à la liste standard au format OpenAI.
 | DELETE  | `/api/conversations/{id}` | Supprime une conversation et ses messages         |
 | POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse |
 | GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
+| GET     | `/api/documents` | Documents importés et leur statut d'indexation           |
+| POST    | `/api/documents` | Importe un fichier (202 : indexation en tâche de fond)   |
+| DELETE  | `/api/documents/{id}` | Supprime un document et ses morceaux                |
 | GET     | `/api/comparisons` | Comparaisons, de la plus récente à la plus ancienne     |
 | POST    | `/api/comparisons` | Crée une comparaison (2 à 4 modèles)                    |
 | GET     | `/api/comparisons/{id}` | Une comparaison et les réponses de chaque modèle   |
