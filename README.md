@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **comparaison de modèles**.
+Développement en cours. Jalon actuel : **catalogue des modèles**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -20,7 +20,8 @@ Développement en cours. Jalon actuel : **comparaison de modèles**.
 - [x] Docker Compose (images multi-étapes, non-root) et CI GitHub Actions
 - [x] Conversations enregistrées dans PostgreSQL (migrations Alembic), réponse partielle conservée si on coupe
 - [ ] Authentification
-- [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques
+- [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques et historique
+- [x] Catalogue des modèles : filtres, tris et mesures réelles faites sur votre installation
 - [ ] RAG sur vos propres documents
 
 ## Architecture
@@ -146,6 +147,20 @@ Les modèles distants sont interrogés en parallèle. Les modèles locaux, eux, 
 ils partagent le même GPU, et les lancer ensemble saturerait la VRAM et fausserait les mesures.
 Le délai avant le premier token d'un modèle local inclut son chargement en VRAM.
 
+Chaque comparaison est enregistrée : on la retrouve dans l'historique, avec la réponse et les
+métriques de chaque modèle.
+
+## Catalogue des modèles
+
+La page `/models` présente une fiche par modèle : taille, contexte, capacités (raisonnement,
+vision, outils, code), prix, et surtout les **mesures réelles** faites par Netherbrain sur votre
+installation (nombre de réponses, vitesse moyenne, délai avant le premier token). On peut
+chercher, filtrer et trier, puis ouvrir un modèle dans le chat ou en sélectionner plusieurs
+pour les comparer.
+
+Ollama décrit ses modèles via son API native (`/api/tags`) ; OpenRouter et Groq ajoutent leurs
+propres champs à la liste standard au format OpenAI.
+
 ## API
 
 | Méthode | Chemin        | Description                                                  |
@@ -158,6 +173,12 @@ Le délai avant le premier token d'un modèle local inclut son chargement en VRA
 | GET     | `/api/conversations/{id}` | Une conversation et ses messages                  |
 | DELETE  | `/api/conversations/{id}` | Supprime une conversation et ses messages         |
 | POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse |
+| GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
+| GET     | `/api/comparisons` | Comparaisons, de la plus récente à la plus ancienne     |
+| POST    | `/api/comparisons` | Crée une comparaison (2 à 4 modèles)                    |
+| GET     | `/api/comparisons/{id}` | Une comparaison et les réponses de chaque modèle   |
+| DELETE  | `/api/comparisons/{id}` | Supprime une comparaison                           |
+| POST    | `/api/comparisons/{id}/results/{result_id}/run` | Streame et enregistre la réponse d'un modèle |
 
 Les deux routes de streaming émettent des événements `reasoning` et `token`, puis un événement
 final `done` portant les métriques (`ttft_ms`, `total_ms`, `tokens_per_second`...) ou un
