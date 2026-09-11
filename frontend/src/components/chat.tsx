@@ -1,12 +1,13 @@
 "use client"
 
-import { BookOpen, BrainCircuit, RotateCw, SquarePen } from "lucide-react"
+import { BookOpen, BrainCircuit, Folder, GitBranch, RotateCw, SquarePen } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 
+import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AppNav } from "@/components/app-nav"
 import { Composer } from "@/components/composer"
-import { HistoryList } from "@/components/history-list"
+import { ConversationTree } from "@/components/conversation-tree"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
 import { Sidebar } from "@/components/sidebar"
@@ -17,9 +18,13 @@ import { useSavedList } from "@/hooks/use-saved-list"
 import {
   deleteConversation,
   deleteDocument,
+  deleteProject,
   listConversations,
   listDocuments,
+  listProjects,
   modelKey,
+  type ConversationSummary,
+  type Project,
   type ProviderStatus,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -33,6 +38,12 @@ export function Chat() {
     persist: conversations.status !== "error",
     onSaved: conversations.refresh,
   })
+
+  const projects = useSavedList(listProjects, deleteProject)
+  // Le projet de la conversation affichée, ou celui d'une nouvelle conversation.
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const project = projects.items.find((p) => p.id === projectId) ?? null
+  const [addingProject, setAddingProject] = useState(false)
 
   const documents = useSavedList(listDocuments, deleteDocument)
   const readyDocuments = documents.items.filter((d) => d.status === "ready").length
@@ -62,6 +73,16 @@ export function Chat() {
     if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
   }
 
+  const openConversation = (conversation: ConversationSummary) => {
+    setProjectId(conversation.project_id)
+    open(conversation.id)
+  }
+
+  const newChat = (inProject: string | null) => {
+    setProjectId(inProject)
+    reset()
+  }
+
   const handleDelete = async (id: string) => {
     if (!window.confirm("Delete this conversation?")) return
     try {
@@ -72,26 +93,53 @@ export function Chat() {
     }
   }
 
+  const handleDeleteProject = async (removed: Project) => {
+    const question = `Remove the project "${removed.name}"? Its conversations are kept, and its folder is not touched.`
+    if (!window.confirm(question)) return
+    try {
+      await projects.remove(removed.id)
+      if (removed.id === projectId) setProjectId(null)
+      // Ses conversations n'ont plus de projet : elles passent dans « Chats ».
+      conversations.refresh()
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const handleProjectCreated = (created: Project) => {
+    setAddingProject(false)
+    projects.refresh()
+    newChat(created.id)
+  }
+
   const streaming = status === "streaming"
 
   return (
     <div className="flex h-dvh">
       <Sidebar>
-        <HistoryList
-          items={conversations.items.map((c) => ({ id: c.id, title: c.title ?? "Untitled" }))}
+        <ConversationTree
+          projects={projects.items}
+          conversations={conversations.items}
           status={conversations.status}
-          activeId={conversationId}
-          onSelect={open}
-          onNew={reset}
+          activeConversationId={conversationId}
+          activeProjectId={projectId}
+          onSelect={openConversation}
+          onNewChat={newChat}
           onDelete={handleDelete}
-          newLabel="New chat"
-          emptyLabel="No conversations yet."
+          onAddProject={() => setAddingProject(true)}
+          onDeleteProject={handleDeleteProject}
         />
       </Sidebar>
+      <AddProjectDialog
+        open={addingProject}
+        onOpenChange={setAddingProject}
+        onCreated={handleProjectCreated}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b px-4 py-2.5">
           <AppNav compact className="md:hidden" />
+          {project && <ProjectBadge project={project} />}
           <div className="ml-auto flex items-center gap-2">
             <ModelPicker
               models={models.models}
@@ -104,7 +152,7 @@ export function Chat() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={reset}
+              onClick={() => newChat(projectId)}
               disabled={messages.length === 0}
               aria-label="New chat"
             >
@@ -122,6 +170,7 @@ export function Chat() {
                 hasModels={models.models.length > 0}
                 unavailable={models.providers.filter((p) => !p.available)}
                 onRetry={models.retry}
+                project={project}
               />
             ) : (
               messages.map((message, index) => (
@@ -160,14 +209,46 @@ export function Chat() {
           </div>
           <Composer
             onSend={(text) =>
-              model && send(text, model, { useDocuments: useDocuments && canUseDocuments })
+              model &&
+              send(text, model, {
+                useDocuments: useDocuments && canUseDocuments,
+                projectId,
+              })
             }
             onStop={stop}
             streaming={streaming}
             disabled={!model}
+            placeholder={project && model ? `Ask about ${project.name}…` : undefined}
           />
         </footer>
       </div>
+    </div>
+  )
+}
+
+/** Le projet de la conversation, comme l'en-tête de Claude Code : dossier, branche, consignes. */
+function ProjectBadge({ project }: { project: Project }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 text-sm">
+      <span className="flex min-w-0 items-center gap-1.5 font-medium" title={project.path}>
+        <Folder className="size-4 shrink-0 text-primary" />
+        <span className="truncate">{project.name}</span>
+      </span>
+      {project.git_branch && (
+        <span className="hidden items-center gap-1 font-mono text-xs text-muted-foreground sm:flex">
+          <GitBranch className="size-3.5" />
+          {project.git_branch}
+        </span>
+      )}
+      {project.instructions_file && (
+        <span
+          className="hidden font-mono text-xs text-muted-foreground lg:inline"
+          title="Sent to the model as the project's instructions"
+        >
+          {project.instructions_file}
+        </span>
+      )}
+      {!project.available && <span className="text-xs text-destructive">Folder not found</span>}
     </div>
   )
 }
@@ -178,9 +259,10 @@ interface EmptyStateProps {
   hasModels: boolean
   unavailable: ProviderStatus[]
   onRetry: () => void
+  project: Project | null
 }
 
-function EmptyState({ error, ready, hasModels, unavailable, onRetry }: EmptyStateProps) {
+function EmptyState({ error, ready, hasModels, unavailable, onRetry, project }: EmptyStateProps) {
   const retry = (
     <Button variant="outline" size="sm" onClick={onRetry}>
       <RotateCw />
@@ -191,7 +273,9 @@ function EmptyState({ error, ready, hasModels, unavailable, onRetry }: EmptyStat
   return (
     <div className="flex flex-col items-center gap-3 pt-[18vh] text-center">
       <BrainCircuit className="size-12 text-primary" strokeWidth={1.5} />
-      <h1 className="text-2xl font-semibold tracking-tight">Many minds, one interface.</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {project ? project.name : "Many minds, one interface."}
+      </h1>
       {error ? (
         <div className="flex flex-col items-center gap-2 text-sm">
           <p className="text-destructive">{error}</p>
@@ -202,6 +286,11 @@ function EmptyState({ error, ready, hasModels, unavailable, onRetry }: EmptyStat
           <p className="text-destructive">No model available. Is Ollama running?</p>
           {retry}
         </div>
+      ) : project ? (
+        <p className="max-w-md text-sm text-muted-foreground">
+          New chat in this project. The model sees its list of files
+          {project.instructions_file && ` and follows its ${project.instructions_file}`}.
+        </p>
       ) : (
         <p className="text-sm text-muted-foreground">
           Pick a model and ask anything. Local models run on your own GPU.

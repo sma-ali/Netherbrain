@@ -38,6 +38,8 @@ interface UseChatOptions {
 interface SendOptions {
   /** S'appuyer sur les documents importés (RAG) ; uniquement avec l'historique. */
   useDocuments?: boolean
+  /** Le projet d'une nouvelle conversation ; ignoré si la conversation existe déjà. */
+  projectId?: string | null
 }
 
 /** La conversation affichée : ses messages, l'envoi et l'arrêt d'une réponse streamée. */
@@ -51,7 +53,11 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
   const requestedRef = useRef<string | null>(null)
 
   const send = useCallback(
-    async (content: string, model: ModelInfo, { useDocuments = false }: SendOptions = {}) => {
+    async (
+      content: string,
+      model: ModelInfo,
+      { useDocuments = false, projectId = null }: SendOptions = {},
+    ) => {
       const userMessage: UIMessage = { id: crypto.randomUUID(), role: "user", content }
       const assistantId = crypto.randomUUID()
 
@@ -78,7 +84,7 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
           // Le serveur garde l'historique : on n'envoie que le nouveau message.
           let id = conversationId
           if (id === null) {
-            id = (await createConversation()).id
+            id = (await createConversation(projectId)).id
             requestedRef.current = id
             setConversationId(id)
             onSaved()

@@ -88,6 +88,8 @@ export interface CatalogResponse {
 export interface ConversationSummary {
   id: string
   title: string | null
+  // Le projet de la conversation ; null pour une simple discussion.
+  project_id: string | null
   created_at: string
   updated_at: string
 }
@@ -154,6 +156,36 @@ export interface DocumentInfo {
   created_at: string
 }
 
+// --- Projets et dossier de travail ---
+
+export interface Project {
+  id: string
+  name: string
+  // Relatif au dossier de travail du serveur.
+  path: string
+  created_at: string
+  // false si le dossier a disparu depuis (déplacé, renommé, supprimé).
+  available: boolean
+  git_branch: string | null
+  // Le fichier de consignes transmis au modèle (AGENTS.md ou CLAUDE.md), s'il y en a un.
+  instructions_file: string | null
+}
+
+export interface FolderInfo {
+  name: string
+  path: string
+  is_git: boolean
+}
+
+export interface DirectoryListing {
+  // Le dossier de travail, tel que le voit le serveur (/workspace dans Docker).
+  root: string
+  // Le dossier listé, relatif au dossier de travail ("" pour la racine).
+  path: string
+  parent: string | null
+  directories: FolderInfo[]
+}
+
 /** Clé unique d'un modèle, tous fournisseurs confondus. Un nom de fournisseur ne contient jamais "/". */
 export const modelKey = (model: ModelInfo) => `${model.provider}/${model.id}`
 
@@ -174,8 +206,15 @@ export async function listConversations(signal?: AbortSignal): Promise<Conversat
   return response.json()
 }
 
-export async function createConversation(): Promise<ConversationSummary> {
-  const response = await request("/api/conversations", { method: "POST" })
+/** Crée une conversation, rattachée au projet `projectId` s'il y en a un. */
+export async function createConversation(
+  projectId: string | null = null,
+): Promise<ConversationSummary> {
+  const response = await request("/api/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+  })
   return response.json()
 }
 
@@ -276,6 +315,38 @@ export async function uploadDocument(file: File): Promise<DocumentInfo> {
 
 export async function deleteDocument(id: string): Promise<void> {
   await request(`/api/documents/${id}`, { method: "DELETE" })
+}
+
+// --- Projets ---
+
+export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
+  const response = await request("/api/projects", { signal })
+  return response.json()
+}
+
+/** Crée un projet à partir d'un dossier ; son nom par défaut est celui du dossier. */
+export async function createProject(path: string, name?: string): Promise<Project> {
+  const response = await request("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, name: name || null }),
+  })
+  return response.json()
+}
+
+/** Oublie un projet : ses conversations restent, son dossier n'est jamais touché. */
+export async function deleteProject(id: string): Promise<void> {
+  await request(`/api/projects/${id}`, { method: "DELETE" })
+}
+
+/** Les sous-dossiers de `path` dans le dossier de travail ("" pour la racine). */
+export async function listDirectories(
+  path: string,
+  signal?: AbortSignal,
+): Promise<DirectoryListing> {
+  const query = new URLSearchParams({ path })
+  const response = await request(`/api/workspace/directories?${query}`, { signal })
+  return response.json()
 }
 
 // --- Mode sans historique ---
