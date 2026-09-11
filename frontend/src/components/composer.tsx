@@ -35,7 +35,8 @@ export function Composer({ onSend, onStop, streaming, disabled }: ComposerProps)
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
-          // Enter sends, Shift+Enter adds a new line. isComposing: ignore IME input.
+          // Entrée envoie, Maj+Entrée ajoute une ligne. isComposing : ignore une saisie
+          // encore en cours de composition (claviers japonais, chinois…).
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
             submit()

@@ -1,32 +1,32 @@
 # syntax=docker/dockerfile:1
 
-# --- Build stage: install dependencies with uv ---
+# --- Étape de build : installer les dépendances avec uv ---
 FROM python:3.14-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.12.13 /uv /bin/uv
 
-# Precompile .pyc files (faster startup), copy files out of the cache mount instead of
-# hard-linking them, and use the image's Python instead of downloading one.
+# Précompiler les .pyc (démarrage plus rapide), copier les fichiers depuis le cache au lieu de
+# créer des liens physiques, et utiliser le Python de l'image au lieu d'en télécharger un.
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
 
 WORKDIR /app
 
-# Dependencies first: this layer stays cached until pyproject.toml or uv.lock change,
-# so editing the code does not reinstall every package.
+# Les dépendances d'abord : cette couche reste en cache tant que pyproject.toml et uv.lock
+# ne changent pas, donc modifier le code ne réinstalle pas tous les paquets.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
-# Then the application itself, installed as a regular package (not editable).
+# Puis l'application elle-même, installée comme un paquet classique (non éditable).
 COPY pyproject.toml uv.lock ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
-# --- Runtime stage: just Python and the virtualenv, no uv, no sources ---
+# --- Étape d'exécution : juste Python et l'environnement virtuel, sans uv ni sources ---
 FROM python:3.14-slim
 
-# Never run as root inside the container.
+# Ne jamais tourner en root dans le conteneur.
 RUN useradd --create-home --uid 1000 netherbrain
 WORKDIR /app
 COPY --from=builder --chown=netherbrain:netherbrain /app/.venv /app/.venv

@@ -15,7 +15,7 @@ export interface UIMessage {
 
 export type ChatStatus = "idle" | "streaming"
 
-/** Conversation state: the message list, and sending/stopping a streamed answer. */
+/** État de la conversation : la liste des messages, et l'envoi/l'arrêt d'une réponse streamée. */
 export function useChat() {
   const [messages, setMessages] = useState<UIMessage[]>([])
   const [status, setStatus] = useState<ChatStatus>("idle")
@@ -26,7 +26,7 @@ export function useChat() {
       const userMessage: UIMessage = { id: crypto.randomUUID(), role: "user", content }
       const assistantId = crypto.randomUUID()
 
-      // LLM APIs are stateless: the whole conversation is sent with every request.
+      // Les API de LLM sont sans état : toute la conversation est renvoyée à chaque requête.
       const history = [...messages, userMessage]
         .filter((message) => message.content)
         .map(({ role, content }) => ({ role, content }))

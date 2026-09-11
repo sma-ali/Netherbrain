@@ -1,7 +1,8 @@
-"""FastAPI dependencies, and the composition root that wires providers together.
+"""Dépendances FastAPI, et la « composition root » qui assemble les fournisseurs.
 
-Routes declare what they need (`Depends(get_registry)`) instead of building it
-themselves, so tests can swap in fakes with `app.dependency_overrides`.
+Les routes déclarent ce dont elles ont besoin (`Depends(get_registry)`) au lieu de le
+construire elles-mêmes : les tests peuvent ainsi y substituer des faux avec
+`app.dependency_overrides`.
 """
 
 from functools import lru_cache
@@ -12,7 +13,7 @@ from netherbrain.config import Settings, get_settings
 from netherbrain.providers import LLMProvider, OpenAICompatibleProvider, ProviderRegistry
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
 
-# Optional attribution headers: they identify the app on openrouter.ai.
+# En-têtes d'attribution facultatifs : ils identifient l'application sur openrouter.ai.
 OPENROUTER_HEADERS = {
     "HTTP-Referer": "https://github.com/sma-ali/Netherbrain",
     "X-Title": "Netherbrain",
@@ -20,7 +21,7 @@ OPENROUTER_HEADERS = {
 
 
 def build_registry(settings: Settings) -> ProviderRegistry:
-    """Local Ollama is always there; each remote provider is enabled by its API key."""
+    """Ollama est toujours présent ; chaque fournisseur distant s'active avec sa clé d'API."""
     providers: list[LLMProvider] = [
         OpenAICompatibleProvider("ollama", settings.ollama_base_url),
     ]
@@ -44,7 +45,7 @@ def build_registry(settings: Settings) -> ProviderRegistry:
 
 
 def _secret(value: SecretStr | None) -> str | None:
-    """The raw key, or None when unset or left empty in .env."""
+    """La clé brute, ou None si elle est absente ou laissée vide dans le .env."""
     return (value.get_secret_value() or None) if value is not None else None
 
 

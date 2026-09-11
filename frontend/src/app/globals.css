@@ -83,7 +83,7 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* Netherbrain theme: deep violet-tinted darks, mind-flayer purple accent. */
+/* Thème Netherbrain : des sombres teintés de violet, accent violet « flagelleur mental ». */
 .dark {
   --background: oklch(0.16 0.012 300);
   --foreground: oklch(0.96 0.005 300);
@@ -130,7 +130,7 @@
   }
 }
 
-/* Typography for model answers rendered from Markdown. */
+/* Typographie des réponses des modèles, rendues depuis le Markdown. */
 @layer components {
   .markdown {
     @apply leading-7 break-words;

@@ -32,7 +32,7 @@ export function Message({ message, streaming }: { message: UIMessage; streaming:
       {message.reasoning && <Reasoning text={message.reasoning} active={thinking} />}
 
       {message.content ? (
-        // react-markdown never renders raw HTML from the model: no XSS through answers.
+        // react-markdown n'affiche jamais de HTML brut venant du modèle : pas de XSS possible.
         <div className="markdown">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
         </div>

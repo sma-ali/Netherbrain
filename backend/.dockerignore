@@ -1,4 +1,4 @@
-# Keep the build context small and secrets out of the image.
+# Garder le contexte de build léger et les secrets hors de l'image.
 .venv
 __pycache__
 *.py[cod]

@@ -31,7 +31,8 @@ dev = [
 line-length = 100
 
 [tool.ruff.lint]
-# E/F: classic errors, I: import order, UP: modern syntax, B: likely bugs, ASYNC: async pitfalls
+# E/F : erreurs classiques, I : ordre des imports, UP : syntaxe moderne,
+# B : bugs probables, ASYNC : pièges de la programmation asynchrone
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
 [tool.pytest.ini_options]

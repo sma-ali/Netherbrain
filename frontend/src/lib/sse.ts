@@ -4,10 +4,11 @@ export interface SSEMessage {
 }
 
 /**
- * Incremental Server-Sent Events parser.
+ * Parseur incrémental de Server-Sent Events.
  *
- * Network chunks can end anywhere (mid-line, even mid-word), so incomplete
- * input is buffered until a blank line closes the event.
+ * Les morceaux reçus du réseau peuvent se couper n'importe où (en pleine ligne, voire en
+ * plein mot) : ce qui est incomplet reste dans un tampon jusqu'à ce qu'une ligne vide
+ * termine l'événement.
  */
 export class SSEParser {
   private buffer = ""
@@ -15,7 +16,7 @@ export class SSEParser {
   feed(chunk: string): SSEMessage[] {
     this.buffer += chunk
     const blocks = this.buffer.split(/\r?\n\r?\n/)
-    // The last block is either empty or an event still being received.
+    // Le dernier bloc est soit vide, soit un événement encore en cours de réception.
     this.buffer = blocks.pop() ?? ""
     return blocks.map(parseBlock).filter((message) => message !== null)
   }
@@ -26,7 +27,7 @@ function parseBlock(block: string): SSEMessage | null {
   const data: string[] = []
 
   for (const line of block.split(/\r?\n/)) {
-    if (line === "" || line.startsWith(":")) continue // ":" starts a comment
+    if (line === "" || line.startsWith(":")) continue // ":" commence un commentaire
     const colon = line.indexOf(":")
     const field = colon === -1 ? line : line.slice(0, colon)
     let value = colon === -1 ? "" : line.slice(colon + 1)

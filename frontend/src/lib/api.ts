@@ -39,7 +39,7 @@ export type ChatEvent =
   | { type: "done"; metrics: ChatMetrics }
   | { type: "error"; message: string }
 
-/** Unique key of a model across providers. Provider names never contain "/". */
+/** Clé unique d'un modèle, tous fournisseurs confondus. Un nom de fournisseur ne contient jamais "/". */
 export const modelKey = (model: ModelInfo) => `${model.provider}/${model.id}`
 
 export async function fetchModels(signal?: AbortSignal): Promise<ModelsResponse> {
@@ -48,10 +48,10 @@ export async function fetchModels(signal?: AbortSignal): Promise<ModelsResponse>
 }
 
 /**
- * POST a conversation and yield the answer event by event.
+ * Envoie une conversation en POST et renvoie la réponse événement par événement.
  *
- * The browser's EventSource only supports GET, so the SSE stream is read by hand
- * from the fetch response body.
+ * L'EventSource du navigateur ne gère que GET : le stream SSE est donc lu à la main
+ * depuis le corps de la réponse de fetch.
  */
 export async function* streamChat(
   model: ModelInfo,
@@ -78,7 +78,7 @@ export async function* streamChat(
       }
     }
   } finally {
-    // Closes the connection if the consumer stops early; no-op once the stream has ended.
+    // Ferme la connexion si l'appelant s'arrête avant la fin ; sans effet si le stream est fini.
     await reader.cancel().catch(() => {})
   }
 }
@@ -115,7 +115,7 @@ async function errorMessage(response: Response): Promise<string> {
     const body = await response.json()
     if (typeof body.detail === "string") return body.detail
   } catch {
-    // Not JSON: fall back to the status line.
+    // Pas du JSON : on se rabat sur la ligne de statut.
   }
   return `HTTP ${response.status} ${response.statusText}`
 }

@@ -5,22 +5,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings, read from environment variables (or a .env file)."""
+    """Configuration de l'application, lue depuis les variables d'environnement (ou un .env)."""
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="NETHERBRAIN_", extra="ignore")
 
-    # Local provider: always enabled.
+    # Fournisseur local : toujours activé.
     ollama_base_url: str = "http://localhost:11434/v1"
 
-    # Remote providers: enabled only when their API key is set.
-    # SecretStr keeps keys out of logs, tracebacks and repr().
+    # Fournisseurs distants : activés seulement si leur clé d'API est renseignée.
+    # SecretStr garde les clés hors des logs, des tracebacks et de repr().
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_free_only: bool = True
     groq_api_key: SecretStr | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
-    # How long /api/models waits for each provider before marking it unavailable.
+    # Délai max accordé à chaque fournisseur par /api/models avant de le déclarer indisponible.
     provider_list_timeout: float = 5.0
 
     cors_origins: list[str] = ["http://localhost:3000"]
