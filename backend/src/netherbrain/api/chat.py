@@ -6,13 +6,19 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from netherbrain.api.deps import get_provider
-from netherbrain.providers import LLMProvider, ProviderError
-from netherbrain.schemas import ChatRequest, ModelInfo, UsageEvent
+from netherbrain.api.deps import get_registry
+from netherbrain.providers import ProviderError, ProviderRegistry, UnknownProviderError
+from netherbrain.schemas import (
+    ChatRequest,
+    ModelInfo,
+    ModelsResponse,
+    ProviderStatus,
+    UsageEvent,
+)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
-Provider = Annotated[LLMProvider, Depends(get_provider)]
+Registry = Annotated[ProviderRegistry, Depends(get_registry)]
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
@@ -21,20 +27,34 @@ def sse(event: str, data: dict[str, Any]) -> str:
 
 
 @router.get("/models")
-async def list_models(provider: Provider) -> list[ModelInfo]:
-    try:
-        model_ids = await provider.list_models()
-    except ProviderError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return [ModelInfo(id=model_id, provider=provider.name) for model_id in model_ids]
+async def list_models(registry: Registry) -> ModelsResponse:
+    """Models of every provider, plus the status of each provider.
+
+    Always answers 200: an unreachable provider shows up as unavailable
+    instead of failing the whole request.
+    """
+    results = await registry.list_all()
+    return ModelsResponse(
+        models=[ModelInfo(id=model, provider=r.name) for r in results for model in r.models],
+        providers=[
+            ProviderStatus(name=r.name, available=r.error is None, error=r.error) for r in results
+        ],
+    )
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest, provider: Provider) -> StreamingResponse:
+async def chat(request: ChatRequest, registry: Registry) -> StreamingResponse:
     """Stream the answer as Server-Sent Events.
 
     Event types: `reasoning`, `token`, then either `done` (with metrics) or `error`.
     """
+    try:
+        provider = registry.get(request.provider)
+    except UnknownProviderError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown provider '{request.provider}'. Available: {', '.join(registry.names)}",
+        ) from exc
 
     async def event_stream() -> AsyncIterator[str]:
         started = time.perf_counter()

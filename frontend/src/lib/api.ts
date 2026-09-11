@@ -14,6 +14,17 @@ export interface ModelInfo {
   provider: string
 }
 
+export interface ProviderStatus {
+  name: string
+  available: boolean
+  error: string | null
+}
+
+export interface ModelsResponse {
+  models: ModelInfo[]
+  providers: ProviderStatus[]
+}
+
 export interface ChatMetrics {
   total_ms: number
   ttft_ms: number | null
@@ -28,7 +39,10 @@ export type ChatEvent =
   | { type: "done"; metrics: ChatMetrics }
   | { type: "error"; message: string }
 
-export async function fetchModels(signal?: AbortSignal): Promise<ModelInfo[]> {
+/** Unique key of a model across providers. Provider names never contain "/". */
+export const modelKey = (model: ModelInfo) => `${model.provider}/${model.id}`
+
+export async function fetchModels(signal?: AbortSignal): Promise<ModelsResponse> {
   const response = await request("/api/models", { signal })
   return response.json()
 }
@@ -40,14 +54,14 @@ export async function fetchModels(signal?: AbortSignal): Promise<ModelInfo[]> {
  * from the fetch response body.
  */
 export async function* streamChat(
-  model: string,
+  model: ModelInfo,
   messages: ChatMessage[],
   signal: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   const response = await request("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages }),
+    body: JSON.stringify({ provider: model.provider, model: model.id, messages }),
     signal,
   })
   if (!response.body) throw new Error("The API returned an empty response")

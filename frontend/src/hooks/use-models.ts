@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useState } from "react"
 
-import { fetchModels, type ModelInfo } from "@/lib/api"
+import { fetchModels, type ModelInfo, type ProviderStatus } from "@/lib/api"
 
-type ModelsState =
-  | { status: "loading"; models: ModelInfo[] }
-  | { status: "ready"; models: ModelInfo[] }
-  | { status: "error"; models: ModelInfo[]; error: string }
+interface ModelsState {
+  status: "loading" | "ready" | "error"
+  models: ModelInfo[]
+  providers: ProviderStatus[]
+  error: string | null
+}
 
-/** Loads the models exposed by the API, with a retry for when the backend is down. */
+const LOADING: ModelsState = { status: "loading", models: [], providers: [], error: null }
+
+/** Loads models and provider statuses from the API, with a retry for when the backend is down. */
 export function useModels() {
-  const [state, setState] = useState<ModelsState>({ status: "loading", models: [] })
+  const [state, setState] = useState<ModelsState>(LOADING)
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
     fetchModels(controller.signal)
-      .then((models) => setState({ status: "ready", models }))
+      .then(({ models, providers }) => setState({ status: "ready", models, providers, error: null }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
         setState({
           status: "error",
           models: [],
+          providers: [],
           error: error instanceof Error ? error.message : String(error),
         })
       })
@@ -29,7 +34,7 @@ export function useModels() {
   }, [attempt])
 
   const retry = useCallback(() => {
-    setState({ status: "loading", models: [] })
+    setState(LOADING)
     setAttempt((n) => n + 1)
   }, [])
 

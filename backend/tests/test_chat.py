@@ -2,37 +2,67 @@ from conftest import FakeProvider, parse_sse
 
 from netherbrain.schemas import ReasoningEvent, TokenEvent, UsageEvent
 
-CHAT_BODY = {"model": "fake-model", "messages": [{"role": "user", "content": "Salut"}]}
+CHAT_BODY = {
+    "provider": "fake",
+    "model": "fake-model",
+    "messages": [{"role": "user", "content": "Salut"}],
+}
 
 
-def test_list_models(client, use_provider):
-    use_provider(FakeProvider())
+# --- /api/models ---
+
+
+def test_models_are_aggregated_across_providers(client, use_providers):
+    use_providers(FakeProvider("local", ["a", "b"]), FakeProvider("remote", ["c"]))
+
+    body = client.get("/api/models").json()
+
+    assert body["models"] == [
+        {"id": "a", "provider": "local"},
+        {"id": "b", "provider": "local"},
+        {"id": "c", "provider": "remote"},
+    ]
+    assert [p["available"] for p in body["providers"]] == [True, True]
+
+
+def test_a_failing_provider_does_not_hide_the_others(client, use_providers):
+    use_providers(FakeProvider("local"), FakeProvider("remote", fail=True))
 
     response = client.get("/api/models")
 
     assert response.status_code == 200
-    assert response.json() == [{"id": "fake-model", "provider": "fake"}]
+    body = response.json()
+    assert body["models"] == [{"id": "local-model", "provider": "local"}]
+    assert body["providers"] == [
+        {"name": "local", "available": True, "error": None},
+        {"name": "remote", "available": False, "error": "remote: unreachable"},
+    ]
 
 
-def test_list_models_when_provider_is_down(client, use_provider):
-    use_provider(FakeProvider(fail=True))
+def test_a_slow_provider_is_marked_unavailable(client, use_providers):
+    use_providers(FakeProvider("local"), FakeProvider("slow", list_delay=1), list_timeout=0.05)
 
-    response = client.get("/api/models")
+    body = client.get("/api/models").json()
 
-    assert response.status_code == 503
+    assert [m["provider"] for m in body["models"]] == ["local"]
+    slow = body["providers"][1]
+    assert slow["available"] is False
+    assert "0.05s" in slow["error"]
 
 
-def test_chat_streams_reasoning_tokens_then_metrics(client, use_provider):
-    provider = use_provider(
-        FakeProvider(
-            [
-                ReasoningEvent(content="Hmm..."),
-                TokenEvent(content="Bon"),
-                TokenEvent(content="jour"),
-                UsageEvent(prompt_tokens=5, completion_tokens=2),
-            ]
-        )
+# --- /api/chat ---
+
+
+def test_chat_streams_reasoning_tokens_then_metrics(client, use_providers):
+    provider = FakeProvider(
+        events=[
+            ReasoningEvent(content="Hmm..."),
+            TokenEvent(content="Bon"),
+            TokenEvent(content="jour"),
+            UsageEvent(prompt_tokens=5, completion_tokens=2),
+        ]
     )
+    use_providers(provider)
 
     response = client.post("/api/chat", json=CHAT_BODY)
 
@@ -51,8 +81,28 @@ def test_chat_streams_reasoning_tokens_then_metrics(client, use_provider):
     assert provider.received[0].content == "Salut"
 
 
-def test_chat_reports_provider_failure_inside_the_stream(client, use_provider):
-    use_provider(FakeProvider([TokenEvent(content="Bon")], fail=True))
+def test_chat_routes_to_the_requested_provider(client, use_providers):
+    local = FakeProvider("local", events=[TokenEvent(content="from local")])
+    remote = FakeProvider("remote", events=[TokenEvent(content="from remote")])
+    use_providers(local, remote)
+
+    response = client.post("/api/chat", json={**CHAT_BODY, "provider": "remote"})
+
+    assert parse_sse(response.text)[0] == ("token", {"content": "from remote"})
+    assert remote.received and not local.received
+
+
+def test_chat_with_an_unknown_provider_returns_404(client, use_providers):
+    use_providers(FakeProvider("local"))
+
+    response = client.post("/api/chat", json={**CHAT_BODY, "provider": "nope"})
+
+    assert response.status_code == 404
+    assert "local" in response.json()["detail"]
+
+
+def test_chat_reports_provider_failure_inside_the_stream(client, use_providers):
+    use_providers(FakeProvider(events=[TokenEvent(content="Bon")], fail=True))
 
     response = client.post("/api/chat", json=CHAT_BODY)
 
@@ -61,9 +111,9 @@ def test_chat_reports_provider_failure_inside_the_stream(client, use_provider):
     assert events[-1] == ("error", {"message": "fake: connection lost"})
 
 
-def test_chat_rejects_empty_conversation(client, use_provider):
-    use_provider(FakeProvider())
+def test_chat_rejects_empty_conversation(client, use_providers):
+    use_providers(FakeProvider())
 
-    response = client.post("/api/chat", json={"model": "fake-model", "messages": []})
+    response = client.post("/api/chat", json={**CHAT_BODY, "messages": []})
 
     assert response.status_code == 422
