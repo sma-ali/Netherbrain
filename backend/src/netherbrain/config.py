@@ -9,6 +9,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="NETHERBRAIN_", extra="ignore")
 
+    # Base PostgreSQL. Par défaut, celle du service « db » de Compose, publiée sur localhost.
+    database_url: str = "postgresql+asyncpg://netherbrain:netherbrain@localhost:5432/netherbrain"
+
     # Fournisseur local : toujours activé.
     ollama_base_url: str = "http://localhost:11434/v1"
 

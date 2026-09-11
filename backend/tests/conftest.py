@@ -1,14 +1,23 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool, StaticPool
 
-from netherbrain.api.deps import get_registry
+from netherbrain.api.deps import get_registry, get_session_factory
+from netherbrain.db.models import Base
 from netherbrain.main import app
 from netherbrain.providers import ProviderError, ProviderRegistry
 from netherbrain.schemas import ChatMessage, StreamEvent
+
+# Par défaut, les tests tournent sur SQLite en mémoire : rapide, rien à installer.
+# La CI les relance sur un vrai PostgreSQL en définissant cette variable.
+TEST_DATABASE_URL = os.environ.get("NETHERBRAIN_TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 
 class FakeProvider:
@@ -40,15 +49,57 @@ class FakeProvider:
         self, model: str, messages: list[ChatMessage]
     ) -> AsyncIterator[StreamEvent]:
         self.received = messages
-        for event in self.events:
-            yield event
+        for scripted in self.events:
+            yield scripted
         if self.fail:
             raise ProviderError(f"{self.name}: connection lost")
 
 
+def make_test_engine(url: str) -> AsyncEngine:
+    if not url.startswith("sqlite"):
+        # NullPool : aucune connexion gardée entre deux tests (chacun a sa boucle d'événements).
+        return create_async_engine(url, poolclass=NullPool)
+
+    # StaticPool : une seule connexion partagée. Sinon chaque connexion ouvrirait
+    # sa propre base en mémoire… vide.
+    engine = create_async_engine(
+        url, poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _record) -> None:
+        # SQLite n'applique les clés étrangères (et ON DELETE CASCADE) que sur demande.
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
+
+
+async def create_schema(engine: AsyncEngine) -> None:
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+
+async def drop_schema(engine: AsyncEngine) -> None:
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    yield TestClient(app)
+    """Un client HTTP de test, branché sur une base neuve pour chaque test."""
+    engine = make_test_engine(TEST_DATABASE_URL)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    app.dependency_overrides[get_session_factory] = lambda: factory
+
+    # Le « with » démarre la boucle d'événements de l'application : la base est créée dedans.
+    with TestClient(app) as test_client:
+        test_client.portal.call(create_schema, engine)
+        test_client.session_factory = factory  # pour inspecter la base depuis un test
+        yield test_client
+        test_client.portal.call(drop_schema, engine)
     app.dependency_overrides.clear()
 
 

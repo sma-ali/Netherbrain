@@ -1,0 +1,129 @@
+"""Routes des conversations enregistrées : lister, créer, lire, supprimer, discuter."""
+
+import logging
+import uuid
+from collections.abc import AsyncIterator
+
+import anyio
+from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
+
+from netherbrain.api.deps import DbSession, Registry, SessionFactory, get_provider_or_404
+from netherbrain.api.streaming import StreamResult, sse_response, stream_answer
+from netherbrain.db.models import Conversation
+from netherbrain.db.repository import ConversationRepository, make_title
+from netherbrain.schemas import (
+    ChatMessage,
+    ConversationDetail,
+    ConversationSummary,
+    SendMessageRequest,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+
+
+async def get_or_404(
+    repository: ConversationRepository, conversation_id: uuid.UUID
+) -> Conversation:
+    conversation = await repository.get(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
+@router.get("")
+async def list_conversations(session: DbSession) -> list[ConversationSummary]:
+    """Les conversations, de la plus récemment active à la plus ancienne."""
+    conversations = await ConversationRepository(session).list_recent()
+    return [ConversationSummary.model_validate(c) for c in conversations]
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_conversation(session: DbSession) -> ConversationSummary:
+    conversation = await ConversationRepository(session).create()
+    await session.commit()
+    return ConversationSummary.model_validate(conversation)
+
+
+@router.get("/{conversation_id}")
+async def get_conversation(conversation_id: uuid.UUID, session: DbSession) -> ConversationDetail:
+    conversation = await get_or_404(ConversationRepository(session), conversation_id)
+    return ConversationDetail.model_validate(conversation)
+
+
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(conversation_id: uuid.UUID, session: DbSession) -> None:
+    if not await ConversationRepository(session).delete(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await session.commit()
+
+
+@router.post("/{conversation_id}/messages")
+async def send_message(
+    conversation_id: uuid.UUID,
+    request: SendMessageRequest,
+    registry: Registry,
+    session: DbSession,
+    session_factory: SessionFactory,
+) -> StreamingResponse:
+    """Enregistre le message de l'utilisateur, puis streame et enregistre la réponse du modèle.
+
+    Le serveur reconstitue lui-même l'historique depuis la base : le client n'envoie que
+    le nouveau message.
+    """
+    repository = ConversationRepository(session)
+    conversation = await get_or_404(repository, conversation_id)
+    provider = get_provider_or_404(registry, request.provider)
+
+    history = [
+        ChatMessage(role=m.role, content=m.content) for m in conversation.messages if m.content
+    ]
+    history.append(ChatMessage(role="user", content=request.content))
+
+    if conversation.title is None:
+        conversation.title = make_title(request.content)
+    await repository.add_message(conversation_id, role="user", content=request.content)
+    await session.commit()
+
+    async def event_stream() -> AsyncIterator[str]:
+        result = StreamResult()
+        try:
+            async for chunk in stream_answer(provider, request.model, history, result):
+                yield chunk
+        finally:
+            # Même si le client coupe la connexion en pleine réponse (bouton stop, onglet
+            # fermé), on enregistre ce qui a déjà été généré. Le « shield » protège cette
+            # écriture de l'annulation que déclenche la déconnexion.
+            with anyio.CancelScope(shield=True):
+                await save_answer(session_factory, conversation_id, request, result)
+
+    return sse_response(event_stream())
+
+
+async def save_answer(
+    session_factory: SessionFactory,
+    conversation_id: uuid.UUID,
+    request: SendMessageRequest,
+    result: StreamResult,
+) -> None:
+    # Une session neuve : celle de la requête a pu être fermée pendant le stream.
+    try:
+        async with session_factory() as session:
+            await ConversationRepository(session).add_message(
+                conversation_id,
+                role="assistant",
+                content=result.content,
+                reasoning=result.reasoning or None,
+                provider=request.provider,
+                model=request.model,
+                metrics=result.metrics,
+                error=result.error,
+                stopped=not result.finished and result.error is None,
+            )
+            await session.commit()
+    except SQLAlchemyError, OSError:
+        # La réponse est déjà partie : impossible de prévenir le client, on journalise.
+        logger.exception("Could not save the answer of conversation %s", conversation_id)
