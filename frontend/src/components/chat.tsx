@@ -15,14 +15,15 @@ export function Chat() {
   const { messages, status, send, stop, reset } = useChat()
   const models = useModels()
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  // Derived state: fall back to the first model (local ones come first) until the user picks one.
+  // État dérivé : on prend le premier modèle (les locaux sont en tête) tant que l'utilisateur
+  // n'en a pas choisi un.
   const model =
     models.models.find((m) => modelKey(m) === selectedKey) ?? models.models[0] ?? null
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
 
-  // Follow the answer as it streams, unless the user scrolled up to read.
+  // Suit la réponse pendant qu'elle s'affiche, sauf si l'utilisateur est remonté pour lire.
   useEffect(() => {
     const el = scrollRef.current
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight

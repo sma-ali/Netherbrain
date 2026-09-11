@@ -5,14 +5,14 @@ from netherbrain.schemas import ChatMessage, StreamEvent
 
 
 class ProviderError(Exception):
-    """Raised when a provider is unreachable or rejects a request."""
+    """Levée quand un fournisseur est injoignable ou refuse une requête."""
 
 
 class LLMProvider(Protocol):
-    """What the rest of the app expects from any LLM backend.
+    """Ce que le reste de l'application attend de n'importe quel backend de LLM.
 
-    The API layer only depends on this interface, never on a concrete provider:
-    adding a new backend means writing a new class, not touching the routes.
+    La couche API ne dépend que de cette interface, jamais d'un fournisseur concret :
+    ajouter un backend, c'est écrire une nouvelle classe, sans toucher aux routes.
     """
 
     name: str

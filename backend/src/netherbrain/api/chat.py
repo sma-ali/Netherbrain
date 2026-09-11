@@ -22,16 +22,16 @@ Registry = Annotated[ProviderRegistry, Depends(get_registry)]
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
-    """Format one Server-Sent Event: an `event:` line, a `data:` line, a blank line."""
+    """Formate un Server-Sent Event : une ligne `event:`, une ligne `data:`, une ligne vide."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @router.get("/models")
 async def list_models(registry: Registry) -> ModelsResponse:
-    """Models of every provider, plus the status of each provider.
+    """Les modèles de tous les fournisseurs, plus l'état de chacun.
 
-    Always answers 200: an unreachable provider shows up as unavailable
-    instead of failing the whole request.
+    Répond toujours 200 : un fournisseur injoignable apparaît comme indisponible
+    au lieu de faire échouer toute la requête.
     """
     results = await registry.list_all()
     return ModelsResponse(
@@ -44,9 +44,10 @@ async def list_models(registry: Registry) -> ModelsResponse:
 
 @router.post("/chat")
 async def chat(request: ChatRequest, registry: Registry) -> StreamingResponse:
-    """Stream the answer as Server-Sent Events.
+    """Streame la réponse sous forme de Server-Sent Events.
 
-    Event types: `reasoning`, `token`, then either `done` (with metrics) or `error`.
+    Types d'événements : `reasoning`, `token`, puis `done` (avec les métriques)
+    ou `error`.
     """
     try:
         provider = registry.get(request.provider)
@@ -70,8 +71,8 @@ async def chat(request: ChatRequest, registry: Registry) -> StreamingResponse:
                     first_token_at = time.perf_counter()
                 yield sse(event.type, event.model_dump(exclude={"type"}))
         except ProviderError as exc:
-            # The 200 status line is already sent once streaming starts,
-            # so errors have to travel inside the stream itself.
+            # Une fois le stream commencé, le statut 200 est déjà parti :
+            # les erreurs doivent donc voyager à l'intérieur du stream.
             yield sse("error", {"message": str(exc)})
             return
 

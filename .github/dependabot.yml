@@ -1,5 +1,5 @@
-# Actions are pinned to commit SHAs in the workflows: Dependabot opens a pull request
-# when a new version is released, so the pins never go stale.
+# Les actions sont épinglées sur des SHA de commits dans les workflows : Dependabot ouvre
+# une pull request à chaque nouvelle version, pour que ces épinglages ne vieillissent pas.
 version: 2
 updates:
   - package-ecosystem: github-actions

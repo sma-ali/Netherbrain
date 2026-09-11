@@ -4,124 +4,127 @@
 
 > Many minds, one interface.
 
-Netherbrain is a self-hostable chat platform that orchestrates several open-source LLMs:
-local models running on your own GPU through [Ollama](https://ollama.com), and remote models
-through any OpenAI-compatible API.
+Netherbrain est une plateforme de chat auto-hébergeable qui orchestre plusieurs LLM open source :
+des modèles locaux qui tournent sur votre propre GPU via [Ollama](https://ollama.com), et des
+modèles distants via n'importe quelle API compatible OpenAI.
 
-## Status
+## Avancement
 
-Early development. Current milestone: **streaming chat, end to end**.
+Développement en cours. Jalon actuel : **chat multi-fournisseur, conteneurisé**.
 
-- [x] FastAPI gateway streaming answers from Ollama (Server-Sent Events)
-- [x] Reasoning ("thinking") tokens streamed separately from the answer
-- [x] Per-answer metrics: time to first token, tokens per second
-- [x] Next.js chat interface: model picker, Markdown answers, collapsible reasoning, stop button
-- [x] Multiple providers (Ollama, OpenRouter, Groq) with graceful degradation when offline
-- [ ] Persistent conversations (PostgreSQL) and authentication
-- [x] Docker Compose (multi-stage, non-root images) and GitHub Actions CI
-- [ ] Side-by-side model comparison
-- [ ] RAG over your own documents
+- [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
+- [x] Réflexion des modèles de raisonnement streamée à part de la réponse
+- [x] Métriques par réponse : délai avant le premier token, tokens par seconde
+- [x] Interface de chat Next.js : choix du modèle, réponses en Markdown, réflexion repliable, bouton stop
+- [x] Plusieurs fournisseurs (Ollama, OpenRouter, Groq), avec dégradation gracieuse hors ligne
+- [x] Docker Compose (images multi-étapes, non-root) et CI GitHub Actions
+- [ ] Conversations persistantes (PostgreSQL) et authentification
+- [ ] Comparaison de modèles côte à côte
+- [ ] RAG sur vos propres documents
 
 ## Architecture
 
 ```
-Next.js UI ──HTTP/SSE──> FastAPI gateway ──OpenAI-compatible API──> Ollama (local GPU)
- (browser)                                                     └──> OpenRouter, Groq (optional)
+Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
+   (navigateur)                                                          └──> OpenRouter, Groq (optionnels)
 ```
 
-| Folder      | Stack                                                                 |
-|-------------|-----------------------------------------------------------------------|
-| `backend/`  | Python 3.14, FastAPI, Pydantic, OpenAI SDK, uv, pytest, Ruff          |
+| Dossier     | Stack                                                                            |
+|-------------|----------------------------------------------------------------------------------|
+| `backend/`  | Python 3.14, FastAPI, Pydantic, SDK OpenAI, uv, pytest, Ruff                     |
 | `frontend/` | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, shadcn/ui, Vitest |
 
-The API layer depends only on an `LLMProvider` interface; every backend speaking the
-OpenAI Chat Completions API is handled by a single `OpenAICompatibleProvider` class.
-The browser reads the SSE stream from a `fetch` response with a small incremental parser
-(`EventSource` only supports GET).
+La couche API ne dépend que d'une interface `LLMProvider` : tous les backends qui parlent l'API
+Chat Completions d'OpenAI sont gérés par une seule classe, `OpenAICompatibleProvider`.
+Le navigateur lit le stream SSE depuis la réponse d'un `fetch`, avec un petit parseur incrémental
+(`EventSource` ne gère que les requêtes GET).
 
-## Getting started
+## Démarrage
 
-### With Docker
+### Avec Docker
 
-Requirements: Docker with Compose, and [Ollama](https://ollama.com) running on the host with
-at least one model (`ollama pull qwen3:8b`).
+Prérequis : Docker avec Compose, et [Ollama](https://ollama.com) qui tourne sur la machine hôte
+avec au moins un modèle (`ollama pull qwen3:8b`).
 
 ```bash
 docker compose up --build
 ```
 
-Then open <http://localhost:3000>.
+Puis ouvrir <http://localhost:3000>.
 
-The API container reaches Ollama through `host.docker.internal`. On Linux, Ollama only listens
-on `127.0.0.1` by default, which containers cannot reach: set `OLLAMA_HOST=0.0.0.0` in the
-Ollama service environment. If Ollama is unreachable anyway, the UI marks it unavailable and
-remote providers keep working.
+Le conteneur de l'API joint Ollama via `host.docker.internal`. Sous Linux, Ollama n'écoute par
+défaut que sur `127.0.0.1`, que les conteneurs ne peuvent pas joindre : définissez
+`OLLAMA_HOST=0.0.0.0` dans l'environnement du service Ollama. Si Ollama reste injoignable,
+l'interface le signale comme indisponible et les fournisseurs distants continuent de fonctionner.
 
-### Without Docker (development)
+### Sans Docker (développement)
 
-Requirements: [uv](https://docs.astral.sh/uv/), Node.js 24+ and a running
-[Ollama](https://ollama.com) with at least one model.
+Prérequis : [uv](https://docs.astral.sh/uv/), Node.js 24+ et [Ollama](https://ollama.com) qui
+tourne avec au moins un modèle.
 
 ```bash
-# Terminal 1: API on http://localhost:8000
+# Terminal 1 : API sur http://localhost:8000
 cd backend
-uv sync                      # create the virtualenv and install dependencies
+uv sync                      # crée l'environnement virtuel et installe les dépendances
 uv run uvicorn netherbrain.main:app --reload
 ```
 
 ```bash
-# Terminal 2: UI on http://localhost:3000
+# Terminal 2 : interface sur http://localhost:3000
 cd frontend
 npm install
 npm run dev
 ```
 
-Interactive API docs: <http://localhost:8000/docs>
+Documentation interactive de l'API : <http://localhost:8000/docs>
 
 ```bash
 curl -N localhost:8000/api/chat \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "ollama", "model": "qwen3:8b", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"provider": "ollama", "model": "qwen3:8b", "messages": [{"role": "user", "content": "Bonjour !"}]}'
 ```
 
-### Remote providers (optional)
+### Fournisseurs distants (optionnel)
 
-Local models work out of the box, offline. To add remote ones, copy the example config and
-paste your API keys; each provider is enabled only when its key is set:
+Les modèles locaux fonctionnent immédiatement, même hors ligne. Pour ajouter des modèles
+distants, copiez la configuration d'exemple et collez vos clés d'API ; chaque fournisseur n'est
+activé que si sa clé est renseignée :
 
 ```bash
 cd backend
-cp .env.example .env         # .env is git-ignored
-# NETHERBRAIN_OPENROUTER_API_KEY=...  -> https://openrouter.ai/keys (free models only by default)
+cp .env.example .env         # .env est ignoré par git
+# NETHERBRAIN_OPENROUTER_API_KEY=...  -> https://openrouter.ai/keys (modèles gratuits par défaut)
 # NETHERBRAIN_GROQ_API_KEY=...        -> https://console.groq.com/keys
 ```
 
-Restart the API after editing `.env`. If a provider is unreachable (no internet, outage,
-invalid key), it is shown as unavailable and every other model keeps working.
+Redémarrez l'API après avoir modifié `.env`. Si un fournisseur est injoignable (pas d'internet,
+panne, clé invalide), il est signalé comme indisponible et tous les autres modèles continuent de
+fonctionner.
 
-### Development
+### Développement
 
 ```bash
 cd backend
-uv run pytest                # tests (no GPU or network needed: providers are faked)
+uv run pytest                # tests (ni GPU ni réseau nécessaires : les fournisseurs sont simulés)
 uv run ruff check .          # lint
-uv run ruff format .         # format
+uv run ruff format .         # formatage
 ```
 
 ```bash
 cd frontend
-npm test                     # unit tests (Vitest)
+npm test                     # tests unitaires (Vitest)
 npm run lint                 # ESLint
-npm run build                # production build + type checking
+npm run build                # build de production + vérification des types
 ```
 
 ## API
 
-| Method | Path          | Description                                  |
-|--------|---------------|----------------------------------------------|
-| GET    | `/api/health` | Liveness probe                               |
-| GET    | `/api/models` | Models of every provider, and whether each provider is reachable |
-| POST   | `/api/chat`   | Streams an answer as Server-Sent Events      |
+| Méthode | Chemin        | Description                                                  |
+|---------|---------------|--------------------------------------------------------------|
+| GET     | `/api/health` | Sonde de vivacité                                            |
+| GET     | `/api/models` | Modèles de tous les fournisseurs, et disponibilité de chacun |
+| POST    | `/api/chat`   | Streame une réponse en Server-Sent Events                    |
 
-`/api/chat` takes `{provider, model, messages}` and emits `reasoning` and `token` events, then a final `done` event carrying metrics
-(`ttft_ms`, `total_ms`, `tokens_per_second`...) or an `error` event.
+`/api/chat` reçoit `{provider, model, messages}` et émet des événements `reasoning` et `token`,
+puis un événement final `done` portant les métriques (`ttft_ms`, `total_ms`,
+`tokens_per_second`...) ou un événement `error`.

@@ -8,10 +8,10 @@ from netherbrain.schemas import ChatMessage, ReasoningEvent, StreamEvent, TokenE
 
 
 class OpenAICompatibleProvider:
-    """Any backend that speaks the OpenAI Chat Completions API.
+    """N'importe quel backend qui parle l'API Chat Completions d'OpenAI.
 
-    Ollama, OpenRouter, Groq, vLLM... all expose this API, so a single class
-    covers them: only the base URL and the API key change.
+    Ollama, OpenRouter, Groq, vLLM... exposent tous cette API : une seule classe
+    les couvre tous, seules l'URL de base et la clé d'API changent.
     """
 
     def __init__(
@@ -62,8 +62,8 @@ class OpenAICompatibleProvider:
                         completion_tokens=chunk.usage.completion_tokens,
                     )
                 for choice in chunk.choices:
-                    # "reasoning" is not part of the official OpenAI schema: Ollama and
-                    # OpenRouter add it for thinking models, hence the getattr.
+                    # « reasoning » ne fait pas partie du schéma officiel d'OpenAI : Ollama
+                    # et OpenRouter l'ajoutent pour les modèles qui réfléchissent, d'où getattr.
                     if reasoning := getattr(choice.delta, "reasoning", None):
                         yield ReasoningEvent(content=reasoning)
                     if choice.delta.content:

@@ -1,12 +1,13 @@
-"""Which models of a remote catalog are worth showing in a chat UI."""
+"""Quels modèles d'un catalogue distant méritent d'être affichés dans l'interface de chat."""
 
 
 def is_free_openrouter_model(model_id: str) -> bool:
-    """OpenRouter marks its zero-cost variants with a ":free" suffix."""
+    """OpenRouter signale ses variantes gratuites par le suffixe « :free »."""
     return model_id.endswith(":free")
 
 
-# Groq also serves speech-to-text, text-to-speech and moderation models on the same endpoint.
+# Groq sert aussi des modèles de transcription, de synthèse vocale et de modération
+# sur le même endpoint : on les écarte.
 _GROQ_NON_CHAT_MARKERS = ("whisper", "tts", "guard", "orpheus")
 
 

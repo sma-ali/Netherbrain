@@ -5,5 +5,5 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 @router.get("/health")
 async def health() -> dict[str, str]:
-    """Liveness probe: answers as long as the process is up."""
+    """Sonde de vivacité (liveness) : répond tant que le processus tourne."""
     return {"status": "ok"}

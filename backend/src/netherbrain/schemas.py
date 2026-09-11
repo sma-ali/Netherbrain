@@ -1,4 +1,4 @@
-"""Data contracts shared by the API layer and the providers."""
+"""Contrats de données partagés par la couche API et les fournisseurs."""
 
 from typing import Literal
 
@@ -32,25 +32,28 @@ class ModelsResponse(BaseModel):
     providers: list[ProviderStatus]
 
 
-# --- Events yielded by a provider while it streams an answer ---
+# --- Événements émis par un fournisseur pendant qu'il streame une réponse ---
 
 
 class TokenEvent(BaseModel):
-    """A piece of the final answer."""
+    """Un morceau de la réponse finale."""
 
     type: Literal["token"] = "token"
     content: str
 
 
 class ReasoningEvent(BaseModel):
-    """A piece of the model's "thinking" (reasoning models such as Qwen3 or DeepSeek-R1)."""
+    """Un morceau de la « réflexion » du modèle.
+
+    Concerne les modèles de raisonnement, comme Qwen3 ou DeepSeek-R1.
+    """
 
     type: Literal["reasoning"] = "reasoning"
     content: str
 
 
 class UsageEvent(BaseModel):
-    """Token accounting, sent once at the end of the stream."""
+    """Décompte des tokens, envoyé une seule fois à la fin du stream."""
 
     type: Literal["usage"] = "usage"
     prompt_tokens: int

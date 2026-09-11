@@ -12,7 +12,7 @@ from netherbrain.schemas import ChatMessage, StreamEvent
 
 
 class FakeProvider:
-    """Stands in for a real LLM: replays scripted events, no network, no GPU."""
+    """Remplace un vrai LLM : rejoue des événements écrits à l'avance, sans réseau ni GPU."""
 
     def __init__(
         self,
@@ -54,7 +54,7 @@ def client() -> Iterator[TestClient]:
 
 @pytest.fixture
 def use_providers():
-    """Replace the real providers with fakes for the current test."""
+    """Remplace les vrais fournisseurs par des faux pendant le test en cours."""
 
     def install(*providers: FakeProvider, list_timeout: float = 1.0) -> ProviderRegistry:
         registry = ProviderRegistry(list(providers), list_timeout=list_timeout)
@@ -65,7 +65,7 @@ def use_providers():
 
 
 def parse_sse(body: str) -> list[tuple[str, dict]]:
-    """Turn a raw SSE body into a list of (event, data) pairs."""
+    """Transforme un corps SSE brut en liste de paires (événement, données)."""
     events = []
     for block in body.strip().split("\n\n"):
         lines = dict(line.split(": ", 1) for line in block.splitlines())

@@ -6,7 +6,7 @@ from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat
 
 
 def make_settings(**overrides) -> Settings:
-    # _env_file=None: ignore the developer's real .env so tests stay reproducible.
+    # _env_file=None : ignore le vrai .env du développeur, pour des tests reproductibles.
     return Settings(_env_file=None, **overrides)
 
 

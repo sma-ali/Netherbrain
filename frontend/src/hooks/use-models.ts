@@ -11,7 +11,10 @@ interface ModelsState {
 
 const LOADING: ModelsState = { status: "loading", models: [], providers: [], error: null }
 
-/** Loads models and provider statuses from the API, with a retry for when the backend is down. */
+/**
+ * Charge les modèles et l'état des fournisseurs depuis l'API,
+ * avec possibilité de réessayer si le backend est éteint.
+ */
 export function useModels() {
   const [state, setState] = useState<ModelsState>(LOADING)
   const [attempt, setAttempt] = useState(0)
@@ -29,7 +32,7 @@ export function useModels() {
           error: error instanceof Error ? error.message : String(error),
         })
       })
-    // Cleanup: cancel the request if the component unmounts or retries first.
+    // Nettoyage : annule la requête si le composant disparaît ou relance avant la réponse.
     return () => controller.abort()
   }, [attempt])
 

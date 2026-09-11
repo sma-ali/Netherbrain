@@ -1,1 +1,1 @@
-"""Netherbrain backend: a multi-LLM chat gateway."""
+"""Backend de Netherbrain : une passerelle de chat multi-LLM."""

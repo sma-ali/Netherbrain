@@ -5,12 +5,12 @@ from netherbrain.providers.base import LLMProvider, ProviderError
 
 
 class UnknownProviderError(LookupError):
-    """Raised when a request names a provider that is not configured."""
+    """Levée quand une requête désigne un fournisseur qui n'est pas configuré."""
 
 
 @dataclass
 class ProviderModels:
-    """The outcome of asking one provider for its models."""
+    """Le résultat de la demande de modèles à un fournisseur."""
 
     name: str
     models: list[str] = field(default_factory=list)
@@ -18,7 +18,7 @@ class ProviderModels:
 
 
 class ProviderRegistry:
-    """Every configured provider, addressable by name."""
+    """Tous les fournisseurs configurés, accessibles par leur nom."""
 
     def __init__(self, providers: list[LLMProvider], list_timeout: float = 5.0) -> None:
         self._providers = {provider.name: provider for provider in providers}
@@ -35,10 +35,10 @@ class ProviderRegistry:
             raise UnknownProviderError(name) from None
 
     async def list_all(self) -> list[ProviderModels]:
-        """Ask every provider concurrently.
+        """Interroge tous les fournisseurs en parallèle.
 
-        Graceful degradation: a provider that is down, slow or offline is reported
-        as unavailable, it never prevents the others from being listed.
+        Dégradation gracieuse : un fournisseur en panne, lent ou hors ligne est signalé
+        comme indisponible, il n'empêche jamais les autres d'être listés.
         """
         return await asyncio.gather(*(self._list_one(p) for p in self._providers.values()))
 
