@@ -15,17 +15,25 @@ from netherbrain.api.deps import (
     Registry,
     SessionFactory,
     SettingsDep,
+    WorkspaceDep,
     get_provider_or_404,
 )
 from netherbrain.api.streaming import StreamResult, sse, sse_response, stream_answer
 from netherbrain.db.models import Conversation
-from netherbrain.db.repository import ConversationRepository, DocumentRepository, make_title
+from netherbrain.db.repository import (
+    ConversationRepository,
+    DocumentRepository,
+    ProjectRepository,
+    make_title,
+)
+from netherbrain.projects.prompt import build_project_context
 from netherbrain.rag.prompt import build_context
 from netherbrain.rag.retrieval import find_sources
 from netherbrain.schemas import (
     ChatMessage,
     ConversationDetail,
     ConversationSummary,
+    CreateConversationRequest,
     SendMessageRequest,
     Source,
 )
@@ -52,8 +60,15 @@ async def list_conversations(session: DbSession) -> list[ConversationSummary]:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_conversation(session: DbSession) -> ConversationSummary:
-    conversation = await ConversationRepository(session).create()
+async def create_conversation(
+    session: DbSession, request: CreateConversationRequest | None = None
+) -> ConversationSummary:
+    """Crée une conversation, rattachée à un projet si on le demande. Le corps est facultatif."""
+    project_id = request.project_id if request else None
+    # Vérifié ici : sinon la clé étrangère refuserait l'insertion, avec une erreur moins claire.
+    if project_id is not None and await ProjectRepository(session).get(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    conversation = await ConversationRepository(session).create(project_id=project_id)
     await session.commit()
     return ConversationSummary.model_validate(conversation)
 
@@ -80,12 +95,14 @@ async def send_message(
     session_factory: SessionFactory,
     embedder: EmbedderDep,
     settings: SettingsDep,
+    workspace: WorkspaceDep,
 ) -> StreamingResponse:
     """Enregistre le message de l'utilisateur, puis streame et enregistre la réponse du modèle.
 
     Le serveur reconstitue lui-même l'historique depuis la base : le client n'envoie que
-    le nouveau message. Avec `use_documents`, les extraits de documents les plus proches
-    de la question sont ajoutés au prompt (RAG) et renvoyés comme sources.
+    le nouveau message. Dans un projet, le modèle reçoit une présentation du projet. Avec
+    `use_documents`, les extraits de documents les plus proches de la question sont ajoutés
+    au prompt (RAG) et renvoyés comme sources.
     """
     repository = ConversationRepository(session)
     conversation = await get_or_404(repository, conversation_id)
@@ -96,6 +113,16 @@ async def send_message(
     ]
     history.append(ChatMessage(role="user", content=request.content))
 
+    # Les consignes passent en message « système », en tête de l'historique : elles guident
+    # la réponse sans apparaître dans la conversation affichée. Un seul message système,
+    # car certains modèles ignorent ceux qui suivent le premier.
+    system: list[str] = []
+    if conversation.project_id is not None:
+        project = await ProjectRepository(session).get(conversation.project_id)
+        folder = workspace.find(project.path) if project else None
+        if project and folder:
+            system.append(build_project_context(project.name, folder))
+
     sources: list[Source] = []
     warning: str | None = None
     if request.use_documents:
@@ -103,9 +130,9 @@ async def send_message(
             request.content, embedder, DocumentRepository(session), settings.rag_top_k
         )
     if sources:
-        # Les extraits passent en message « système », en tête de l'historique : ils guident
-        # la réponse sans apparaître dans la conversation affichée.
-        history.insert(0, ChatMessage(role="system", content=build_context(sources)))
+        system.append(build_context(sources))
+    if system:
+        history.insert(0, ChatMessage(role="system", content="\n\n".join(system)))
 
     if conversation.title is None:
         conversation.title = make_title(request.content)

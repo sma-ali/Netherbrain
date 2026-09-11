@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from netherbrain.config import Settings, get_settings
 from netherbrain.db.models import EMBEDDING_DIMENSIONS
 from netherbrain.db.session import create_engine
+from netherbrain.projects.workspace import Workspace
 from netherbrain.providers import (
     LLMProvider,
     OllamaProvider,
@@ -127,3 +128,14 @@ def get_embedder() -> Embedder:
 
 
 EmbedderDep = Annotated[Embedder, Depends(get_embedder)]
+
+
+# --- Projets ---
+
+
+@lru_cache
+def get_workspace() -> Workspace:
+    return Workspace(get_settings().workspace_root)
+
+
+WorkspaceDep = Annotated[Workspace, Depends(get_workspace)]

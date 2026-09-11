@@ -83,8 +83,14 @@ class ConversationSummary(BaseModel):
 
     id: uuid.UUID
     title: str | None
+    project_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class CreateConversationRequest(BaseModel):
+    # Le projet auquel rattacher la conversation ; aucun pour une simple discussion.
+    project_id: uuid.UUID | None = None
 
 
 class Source(BaseModel):
@@ -124,6 +130,46 @@ class SendMessageRequest(BaseModel):
     content: str = Field(min_length=1)
     # Chercher dans les documents importés et s'appuyer sur eux pour répondre (RAG).
     use_documents: bool = False
+
+
+# --- Projets et dossier de travail ---
+
+
+class ProjectOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    # Relatif au dossier de travail.
+    path: str
+    created_at: datetime
+    # False si le dossier a disparu depuis (déplacé, renommé, supprimé).
+    available: bool
+    git_branch: str | None = None
+    # Le fichier de consignes transmis au modèle (AGENTS.md ou CLAUDE.md), s'il y en a un.
+    instructions_file: str | None = None
+
+
+class CreateProjectRequest(BaseModel):
+    path: str
+    # Par défaut : le nom du dossier.
+    name: str | None = Field(default=None, max_length=200)
+
+
+class FolderInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    path: str
+    is_git: bool
+
+
+class DirectoryListing(BaseModel):
+    # Le dossier de travail, tel que le voit le serveur (/workspace dans Docker).
+    root: str
+    # Le dossier listé, relatif au dossier de travail ("" pour la racine).
+    path: str
+    # Le dossier parent, ou None à la racine.
+    parent: str | None
+    directories: list[FolderInfo]
 
 
 # --- Documents (RAG) ---

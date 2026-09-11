@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,11 @@ class Settings(BaseSettings):
     chunk_size: int = 1200
     chunk_overlap: int = 200
     max_upload_mb: int = 20
+
+    # --- Projets ---
+    # Le dossier de travail : chaque projet est l'un de ses sous-dossiers, et l'application
+    # n'accède jamais à rien en dehors. Dans Docker, c'est le dossier monté sur /workspace.
+    workspace_root: Path = Path.home() / "Projects"
 
     cors_origins: list[str] = ["http://localhost:3000"]
 

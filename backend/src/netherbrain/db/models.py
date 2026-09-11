@@ -22,6 +22,19 @@ class Base(DeclarativeBase):
     """Classe mère des modèles : elle tient le catalogue des tables (`Base.metadata`)."""
 
 
+class Project(Base):
+    """Un dossier de code auquel on rattache des conversations, comme dans Claude Code."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    name: Mapped[str] = mapped_column(String(200))
+    # Relatif au dossier de travail (NETHERBRAIN_WORKSPACE_ROOT), avec des « / ». Unique :
+    # un dossier n'appartient qu'à un seul projet.
+    path: Mapped[str] = mapped_column(String(1024), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -29,6 +42,12 @@ class Conversation(Base):
     # Les index restent compacts et trier par identifiant revient à trier par date.
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     title: Mapped[str | None] = mapped_column(String(200))
+    # SET NULL : supprimer un projet garde ses conversations, qui redeviennent de simples
+    # discussions. On ne détruit jamais plus que ce qui est demandé.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL", name="fk_conversations_project_id_projects"),
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True

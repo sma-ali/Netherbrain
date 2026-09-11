@@ -4,6 +4,7 @@ import os
 import re
 import zlib
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,10 +12,11 @@ from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
-from netherbrain.api.deps import get_embedder, get_registry, get_session_factory
+from netherbrain.api.deps import get_embedder, get_registry, get_session_factory, get_workspace
 from netherbrain.db.models import EMBEDDING_DIMENSIONS, Base
 from netherbrain.db.session import enable_pgvector
 from netherbrain.main import app
+from netherbrain.projects.workspace import Workspace
 from netherbrain.providers import ProviderError, ProviderRegistry
 from netherbrain.rag.embeddings import EmbeddingError
 from netherbrain.schemas import ChatMessage, ModelCard, StreamEvent
@@ -165,6 +167,15 @@ def use_embedder():
         return embedder
 
     return install
+
+
+@pytest.fixture
+def workspace(tmp_path: Path) -> Path:
+    """Un dossier de travail jetable, à la place de ~/Projects, pendant le test en cours."""
+    root = tmp_path / "workspace"
+    root.mkdir()
+    app.dependency_overrides[get_workspace] = lambda: Workspace(root)
+    return root
 
 
 def parse_sse(body: str) -> list[tuple[str, dict]]:

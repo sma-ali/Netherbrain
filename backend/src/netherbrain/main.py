@@ -7,7 +7,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from netherbrain.api import catalog, chat, comparisons, conversations, documents, health
+from netherbrain.api import (
+    catalog,
+    chat,
+    comparisons,
+    conversations,
+    documents,
+    health,
+    projects,
+    workspace,
+)
 from netherbrain.api.deps import get_engine
 from netherbrain.config import get_settings
 
@@ -49,6 +58,8 @@ def create_app() -> FastAPI:
     app.include_router(comparisons.router)
     app.include_router(catalog.router)
     app.include_router(documents.router)
+    app.include_router(projects.router)
+    app.include_router(workspace.router)
     return app
 
 

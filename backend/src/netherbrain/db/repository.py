@@ -15,6 +15,7 @@ from netherbrain.db.models import (
     Document,
     DocumentChunk,
     Message,
+    Project,
     utcnow,
 )
 from netherbrain.rag.chunking import Chunk
@@ -47,8 +48,10 @@ class ConversationRepository:
             .options(selectinload(Conversation.messages))
         )
 
-    async def create(self, title: str | None = None) -> Conversation:
-        conversation = Conversation(title=title)
+    async def create(
+        self, title: str | None = None, project_id: uuid.UUID | None = None
+    ) -> Conversation:
+        conversation = Conversation(title=title, project_id=project_id)
         self._session.add(conversation)
         await self._session.flush()
         return conversation
@@ -71,6 +74,35 @@ class ConversationRepository:
         )
         await self._session.flush()
         return message
+
+
+class ProjectRepository:
+    """Les projets ; comme ailleurs, sans commit()."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_all(self) -> Sequence[Project]:
+        # lower() : un tri alphabétique qui ignore les majuscules.
+        result = await self._session.scalars(select(Project).order_by(func.lower(Project.name)))
+        return result.all()
+
+    async def get(self, project_id: uuid.UUID) -> Project | None:
+        return await self._session.get(Project, project_id)
+
+    async def get_by_path(self, path: str) -> Project | None:
+        return await self._session.scalar(select(Project).where(Project.path == path))
+
+    async def create(self, name: str, path: str) -> Project:
+        project = Project(name=name, path=path)
+        self._session.add(project)
+        await self._session.flush()
+        return project
+
+    async def delete(self, project_id: uuid.UUID) -> bool:
+        """Supprime le projet ; la base détache ses conversations (ON DELETE SET NULL)."""
+        result = await self._session.execute(delete(Project).where(Project.id == project_id))
+        return result.rowcount > 0
 
 
 def make_title(content: str, max_length: int = 60) -> str:
