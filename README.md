@@ -1,5 +1,7 @@
 # Netherbrain
 
+[![CI](https://github.com/sma-ali/Netherbrain/actions/workflows/ci.yml/badge.svg)](https://github.com/sma-ali/Netherbrain/actions/workflows/ci.yml)
+
 > Many minds, one interface.
 
 Netherbrain is a self-hostable chat platform that orchestrates several open-source LLMs:
@@ -16,7 +18,7 @@ Early development. Current milestone: **streaming chat, end to end**.
 - [x] Next.js chat interface: model picker, Markdown answers, collapsible reasoning, stop button
 - [x] Multiple providers (Ollama, OpenRouter, Groq) with graceful degradation when offline
 - [ ] Persistent conversations (PostgreSQL) and authentication
-- [ ] Docker Compose, CI
+- [x] Docker Compose (multi-stage, non-root images) and GitHub Actions CI
 - [ ] Side-by-side model comparison
 - [ ] RAG over your own documents
 
@@ -39,8 +41,26 @@ The browser reads the SSE stream from a `fetch` response with a small incrementa
 
 ## Getting started
 
+### With Docker
+
+Requirements: Docker with Compose, and [Ollama](https://ollama.com) running on the host with
+at least one model (`ollama pull qwen3:8b`).
+
+```bash
+docker compose up --build
+```
+
+Then open <http://localhost:3000>.
+
+The API container reaches Ollama through `host.docker.internal`. On Linux, Ollama only listens
+on `127.0.0.1` by default, which containers cannot reach: set `OLLAMA_HOST=0.0.0.0` in the
+Ollama service environment. If Ollama is unreachable anyway, the UI marks it unavailable and
+remote providers keep working.
+
+### Without Docker (development)
+
 Requirements: [uv](https://docs.astral.sh/uv/), Node.js 24+ and a running
-[Ollama](https://ollama.com) with at least one model (`ollama pull qwen3:8b`).
+[Ollama](https://ollama.com) with at least one model.
 
 ```bash
 # Terminal 1: API on http://localhost:8000
