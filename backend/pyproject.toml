@@ -1,0 +1,38 @@
+[project]
+name = "netherbrain-backend"
+version = "0.1.0"
+description = "Netherbrain API: a gateway that streams chat completions from multiple LLM providers"
+authors = [
+    { name = "Ali", email = "" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.141.1",
+    "openai>=3.13.0",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.52.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "netherbrain"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# E/F: classic errors, I: import order, UP: modern syntax, B: likely bugs, ASYNC: async pitfalls
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
