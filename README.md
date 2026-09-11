@@ -14,7 +14,7 @@ Early development. Current milestone: **streaming chat, end to end**.
 - [x] Reasoning ("thinking") tokens streamed separately from the answer
 - [x] Per-answer metrics: time to first token, tokens per second
 - [x] Next.js chat interface: model picker, Markdown answers, collapsible reasoning, stop button
-- [ ] Multiple providers (OpenRouter, Groq...) with graceful degradation when offline
+- [x] Multiple providers (Ollama, OpenRouter, Groq) with graceful degradation when offline
 - [ ] Persistent conversations (PostgreSQL) and authentication
 - [ ] Docker Compose, CI
 - [ ] Side-by-side model comparison
@@ -24,7 +24,7 @@ Early development. Current milestone: **streaming chat, end to end**.
 
 ```
 Next.js UI ──HTTP/SSE──> FastAPI gateway ──OpenAI-compatible API──> Ollama (local GPU)
- (browser)                                                     └──> remote providers (soon)
+ (browser)                                                     └──> OpenRouter, Groq (optional)
 ```
 
 | Folder      | Stack                                                                 |
@@ -61,8 +61,23 @@ Interactive API docs: <http://localhost:8000/docs>
 ```bash
 curl -N localhost:8000/api/chat \
   -H 'Content-Type: application/json' \
-  -d '{"model": "qwen3:8b", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"provider": "ollama", "model": "qwen3:8b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
+
+### Remote providers (optional)
+
+Local models work out of the box, offline. To add remote ones, copy the example config and
+paste your API keys; each provider is enabled only when its key is set:
+
+```bash
+cd backend
+cp .env.example .env         # .env is git-ignored
+# NETHERBRAIN_OPENROUTER_API_KEY=...  -> https://openrouter.ai/keys (free models only by default)
+# NETHERBRAIN_GROQ_API_KEY=...        -> https://console.groq.com/keys
+```
+
+Restart the API after editing `.env`. If a provider is unreachable (no internet, outage,
+invalid key), it is shown as unavailable and every other model keeps working.
 
 ### Development
 
@@ -85,8 +100,8 @@ npm run build                # production build + type checking
 | Method | Path          | Description                                  |
 |--------|---------------|----------------------------------------------|
 | GET    | `/api/health` | Liveness probe                               |
-| GET    | `/api/models` | Models available from the provider           |
+| GET    | `/api/models` | Models of every provider, and whether each provider is reachable |
 | POST   | `/api/chat`   | Streams an answer as Server-Sent Events      |
 
-`/api/chat` emits `reasoning` and `token` events, then a final `done` event carrying metrics
+`/api/chat` takes `{provider, model, messages}` and emits `reasoning` and `token` events, then a final `done` event carrying metrics
 (`ttft_ms`, `total_ms`, `tokens_per_second`...) or an `error` event.
