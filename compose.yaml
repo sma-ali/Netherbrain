@@ -1,0 +1,30 @@
+# Netherbrain: `docker compose up --build`, then open http://localhost:3000
+name: netherbrain
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "127.0.0.1:8000:8000" # published on localhost only, not on the network
+    env_file:
+      - path: ./backend/.env # API keys for remote providers (optional)
+        required: false
+    environment:
+      # Inside a container, "localhost" is the container itself: Ollama runs on the host.
+      NETHERBRAIN_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # built into Docker Desktop, needed on Linux
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Seen from the browser, so it is the published port on localhost.
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
