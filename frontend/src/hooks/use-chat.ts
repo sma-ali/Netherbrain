@@ -1,13 +1,13 @@
 import { useCallback, useRef, useState } from "react"
 
-import { streamChat, type ChatMetrics } from "@/lib/api"
+import { streamChat, type ChatMetrics, type ModelInfo } from "@/lib/api"
 
 export interface UIMessage {
   id: string
   role: "user" | "assistant"
   content: string
   reasoning?: string
-  model?: string
+  model?: ModelInfo
   metrics?: ChatMetrics
   error?: string
   stopped?: boolean
@@ -22,7 +22,7 @@ export function useChat() {
   const abortRef = useRef<AbortController | null>(null)
 
   const send = useCallback(
-    async (content: string, model: string) => {
+    async (content: string, model: ModelInfo) => {
       const userMessage: UIMessage = { id: crypto.randomUUID(), role: "user", content }
       const assistantId = crypto.randomUUID()
 

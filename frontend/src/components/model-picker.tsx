@@ -1,24 +1,37 @@
 "use client"
 
+import { Fragment } from "react"
+
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select"
-import type { ModelInfo } from "@/lib/api"
+import { modelKey, type ModelInfo, type ProviderStatus } from "@/lib/api"
+import { cn } from "@/lib/utils"
 
 interface ModelPickerProps {
   models: ModelInfo[]
+  providers: ProviderStatus[]
   value: string | null
-  onChange: (model: string) => void
+  onChange: (key: string) => void
   loading: boolean
   disabled: boolean
 }
 
-export function ModelPicker({ models, value, onChange, loading, disabled }: ModelPickerProps) {
-  const placeholder = loading ? "Loading models…" : "No model"
+export function ModelPicker({
+  models,
+  providers,
+  value,
+  onChange,
+  loading,
+  disabled,
+}: ModelPickerProps) {
+  const selected = models.find((model) => modelKey(model) === value)
 
   return (
     <Select
@@ -28,15 +41,35 @@ export function ModelPicker({ models, value, onChange, loading, disabled }: Mode
       }}
       disabled={disabled || models.length === 0}
     >
-      <SelectTrigger size="sm" aria-label="Model" className="min-w-44 font-mono text-xs">
-        <SelectValue placeholder={placeholder} />
+      <SelectTrigger size="sm" aria-label="Model" className="max-w-72 min-w-44 font-mono text-xs">
+        <span className="truncate">
+          {selected ? selected.id : loading ? "Loading models…" : "No model"}
+        </span>
       </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} align="end">
-        {models.map((model) => (
-          <SelectItem key={`${model.provider}/${model.id}`} value={model.id}>
-            <span className="font-mono text-xs">{model.id}</span>
-            <span className="ml-auto text-xs text-muted-foreground">{model.provider}</span>
-          </SelectItem>
+      <SelectContent alignItemWithTrigger={false} align="end" className="min-w-72">
+        {providers.map((provider, index) => (
+          <Fragment key={provider.name}>
+            {index > 0 && <SelectSeparator />}
+            <SelectGroup>
+              <SelectLabel className="flex items-center gap-1.5" title={provider.error ?? undefined}>
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    provider.available ? "bg-emerald-500" : "bg-destructive",
+                  )}
+                />
+                {provider.name}
+                {!provider.available && <span className="text-destructive">unavailable</span>}
+              </SelectLabel>
+              {models
+                .filter((model) => model.provider === provider.name)
+                .map((model) => (
+                  <SelectItem key={modelKey(model)} value={modelKey(model)}>
+                    <span className="font-mono text-xs">{model.id}</span>
+                  </SelectItem>
+                ))}
+            </SelectGroup>
+          </Fragment>
         ))}
       </SelectContent>
     </Select>

@@ -9,13 +9,15 @@ import { ModelPicker } from "@/components/model-picker"
 import { Button } from "@/components/ui/button"
 import { useChat } from "@/hooks/use-chat"
 import { useModels } from "@/hooks/use-models"
+import { modelKey, type ProviderStatus } from "@/lib/api"
 
 export function Chat() {
   const { messages, status, send, stop, reset } = useChat()
   const models = useModels()
-  const [selectedModel, setSelectedModel] = useState<string | null>(null)
-  // Derived state: fall back to the first model until the user picks one.
-  const model = selectedModel ?? models.models[0]?.id ?? null
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // Derived state: fall back to the first model (local ones come first) until the user picks one.
+  const model =
+    models.models.find((m) => modelKey(m) === selectedKey) ?? models.models[0] ?? null
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -43,8 +45,9 @@ export function Chat() {
         <div className="ml-auto flex items-center gap-2">
           <ModelPicker
             models={models.models}
-            value={model}
-            onChange={setSelectedModel}
+            providers={models.providers}
+            value={model ? modelKey(model) : null}
+            onChange={setSelectedKey}
             loading={models.status === "loading"}
             disabled={streaming}
           />
@@ -63,7 +66,13 @@ export function Chat() {
       <main ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
           {messages.length === 0 ? (
-            <EmptyState error={models.status === "error" ? models.error : null} onRetry={models.retry} />
+            <EmptyState
+              error={models.error}
+              ready={models.status === "ready"}
+              hasModels={models.models.length > 0}
+              unavailable={models.providers.filter((p) => !p.available)}
+              onRetry={models.retry}
+            />
           ) : (
             messages.map((message, index) => (
               <Message
@@ -88,7 +97,22 @@ export function Chat() {
   )
 }
 
-function EmptyState({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+interface EmptyStateProps {
+  error: string | null
+  ready: boolean
+  hasModels: boolean
+  unavailable: ProviderStatus[]
+  onRetry: () => void
+}
+
+function EmptyState({ error, ready, hasModels, unavailable, onRetry }: EmptyStateProps) {
+  const retry = (
+    <Button variant="outline" size="sm" onClick={onRetry}>
+      <RotateCw />
+      Retry
+    </Button>
+  )
+
   return (
     <div className="flex flex-col items-center gap-3 pt-[18vh] text-center">
       <BrainCircuit className="size-12 text-primary" strokeWidth={1.5} />
@@ -96,14 +120,22 @@ function EmptyState({ error, onRetry }: { error: string | null; onRetry: () => v
       {error ? (
         <div className="flex flex-col items-center gap-2 text-sm">
           <p className="text-destructive">{error}</p>
-          <Button variant="outline" size="sm" onClick={onRetry}>
-            <RotateCw />
-            Retry
-          </Button>
+          {retry}
+        </div>
+      ) : ready && !hasModels ? (
+        <div className="flex flex-col items-center gap-2 text-sm">
+          <p className="text-destructive">No model available. Is Ollama running?</p>
+          {retry}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
           Pick a model and ask anything. Local models run on your own GPU.
+        </p>
+      )}
+      {!error && unavailable.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Unavailable right now: {unavailable.map((p) => p.name).join(", ")}.
+          {hasModels && " The other models still work."}
         </p>
       )}
     </div>
