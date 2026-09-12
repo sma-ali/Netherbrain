@@ -1,6 +1,14 @@
 "use client"
 
-import { BookOpen, BrainCircuit, Folder, GitBranch, RotateCw, SquarePen } from "lucide-react"
+import {
+  BookOpen,
+  BrainCircuit,
+  Folder,
+  GitBranch,
+  RotateCw,
+  SquarePen,
+  Wrench,
+} from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 
@@ -34,7 +42,7 @@ export function Chat() {
   const conversations = useSavedList(listConversations, deleteConversation)
   // On enregistre tant que l'historique répond. S'il est indisponible, le chat continue
   // de fonctionner sans rien enregistrer (dégradation gracieuse).
-  const { conversationId, messages, status, send, stop, open, reset } = useChat({
+  const { conversationId, messages, status, send, stop, open, reset, approve } = useChat({
     persist: conversations.status !== "error",
     onSaved: conversations.refresh,
   })
@@ -44,6 +52,10 @@ export function Chat() {
   const [projectId, setProjectId] = useState<string | null>(null)
   const project = projects.items.find((p) => p.id === projectId) ?? null
   const [addingProject, setAddingProject] = useState(false)
+
+  // Mode agent : il faut un projet dont le dossier existe, et un modèle qui sait appeler
+  // des outils. Sans l'historique côté serveur, il n'y a même pas de conversation.
+  const [agent, setAgent] = useState(false)
 
   const documents = useSavedList(listDocuments, deleteDocument)
   const readyDocuments = documents.items.filter((d) => d.status === "ready").length
@@ -56,8 +68,7 @@ export function Chat() {
   const [selectedKey, setSelectedKey] = useState<string | null>(() => searchParams.get("model"))
   // État dérivé : on prend le premier modèle (les locaux sont en tête) tant que l'utilisateur
   // n'en a pas choisi un.
-  const model =
-    models.models.find((m) => modelKey(m) === selectedKey) ?? models.models[0] ?? null
+  const model = models.models.find((m) => modelKey(m) === selectedKey) ?? models.models[0] ?? null
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -113,6 +124,18 @@ export function Chat() {
   }
 
   const streaming = status === "streaming"
+  const canUseAgent =
+    conversations.status !== "error" &&
+    project !== null &&
+    project.available &&
+    model?.tools === true
+  const agentHint = !project
+    ? "Start a chat inside a project first"
+    : !project.available
+      ? "The project's folder is missing"
+      : model?.tools !== true
+        ? `${model?.id ?? "This model"} cannot use tools`
+        : "Let the model read, search and change the project's files"
 
   return (
     <div className="flex h-dvh">
@@ -178,6 +201,7 @@ export function Chat() {
                   key={message.id}
                   message={message}
                   streaming={streaming && index === messages.length - 1}
+                  onApprove={approve}
                 />
               ))
             )}
@@ -185,7 +209,23 @@ export function Chat() {
         </main>
 
         <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
-          <div className="mb-2 flex">
+          <div className="mb-2 flex gap-2">
+            <button
+              type="button"
+              aria-pressed={agent && canUseAgent}
+              disabled={!canUseAgent}
+              onClick={() => setAgent((value) => !value)}
+              title={agentHint}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                agent &&
+                  canUseAgent &&
+                  "border-primary bg-primary/15 text-primary hover:bg-primary/20",
+              )}
+            >
+              <Wrench className="size-3.5" />
+              Agent
+            </button>
             <button
               type="button"
               aria-pressed={useDocuments && canUseDocuments}
@@ -213,12 +253,19 @@ export function Chat() {
               send(text, model, {
                 useDocuments: useDocuments && canUseDocuments,
                 projectId,
+                agent: agent && canUseAgent,
               })
             }
             onStop={stop}
             streaming={streaming}
             disabled={!model}
-            placeholder={project && model ? `Ask about ${project.name}…` : undefined}
+            placeholder={
+              agent && canUseAgent
+                ? `Ask the agent to change ${project?.name}…`
+                : project && model
+                  ? `Ask about ${project.name}…`
+                  : undefined
+            }
           />
         </footer>
       </div>

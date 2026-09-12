@@ -1,15 +1,18 @@
 import { useCallback, useRef, useState } from "react"
 
 import {
+  approveTool,
   createConversation,
   getConversation,
   streamChat,
   streamMessage,
+  type AgentStep,
   type ChatEvent,
   type ChatMetrics,
   type ModelInfo,
   type Source,
   type StoredMessage,
+  type ToolDecision,
 } from "@/lib/api"
 
 export interface UIMessage {
@@ -24,6 +27,8 @@ export interface UIMessage {
   // Extraits de documents utilisés pour répondre (RAG), et avertissement éventuel.
   sources?: Source[]
   sourcesWarning?: string
+  // Les outils utilisés par l'agent, dans l'ordre où il les a demandés.
+  steps?: AgentStep[]
 }
 
 export type ChatStatus = "idle" | "streaming"
@@ -40,6 +45,17 @@ interface SendOptions {
   useDocuments?: boolean
   /** Le projet d'une nouvelle conversation ; ignoré si la conversation existe déjà. */
   projectId?: string | null
+  /** Mode agent : le modèle peut lire et modifier les fichiers du projet. */
+  agent?: boolean
+}
+
+/** Remplace un appel d'outil dans la liste, sans toucher aux autres. */
+function updateStep(
+  steps: AgentStep[] | undefined,
+  id: string,
+  changes: Partial<AgentStep>,
+): AgentStep[] {
+  return (steps ?? []).map((step) => (step.id === id ? { ...step, ...changes } : step))
 }
 
 /** La conversation affichée : ses messages, l'envoi et l'arrêt d'une réponse streamée. */
@@ -56,9 +72,13 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
     async (
       content: string,
       model: ModelInfo,
-      { useDocuments = false, projectId = null }: SendOptions = {},
+      { useDocuments = false, projectId = null, agent = false }: SendOptions = {},
     ) => {
-      const userMessage: UIMessage = { id: crypto.randomUUID(), role: "user", content }
+      const userMessage: UIMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content,
+      }
       const assistantId = crypto.randomUUID()
 
       setMessages((prev) => [
@@ -89,7 +109,10 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
             setConversationId(id)
             onSaved()
           }
-          events = streamMessage(id, model, content, controller.signal, useDocuments)
+          events = streamMessage(id, model, content, controller.signal, {
+            useDocuments,
+            agent,
+          })
         } else {
           // Sans historique côté serveur, toute la conversation part à chaque requête
           // (les API de LLM sont sans état).
@@ -108,10 +131,43 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
               }))
               break
             case "reasoning":
-              patchAnswer((m) => ({ reasoning: (m.reasoning ?? "") + event.content }))
+              patchAnswer((m) => ({
+                reasoning: (m.reasoning ?? "") + event.content,
+              }))
               break
             case "token":
               patchAnswer((m) => ({ content: m.content + event.content }))
+              break
+            case "tool_call":
+              patchAnswer((m) => ({
+                steps: [
+                  ...(m.steps ?? []),
+                  {
+                    id: event.id,
+                    name: event.name,
+                    summary: event.summary,
+                    status: "running",
+                    output: "",
+                  },
+                ],
+              }))
+              break
+            case "tool_request":
+              // L'agent attend : le stream ne reprendra qu'après la réponse de l'utilisateur.
+              patchAnswer((m) => ({
+                steps: updateStep(m.steps, event.id, {
+                  status: "asking",
+                  arguments: event.arguments,
+                }),
+              }))
+              break
+            case "tool_result":
+              patchAnswer((m) => ({
+                steps: updateStep(m.steps, event.id, {
+                  status: event.status as AgentStep["status"],
+                  output: event.output,
+                }),
+              }))
               break
             case "done":
               patchAnswer(() => ({ metrics: event.metrics }))
@@ -125,7 +181,9 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
         if (controller.signal.aborted) {
           patchAnswer(() => ({ stopped: true }))
         } else {
-          patchAnswer(() => ({ error: error instanceof Error ? error.message : String(error) }))
+          patchAnswer(() => ({
+            error: error instanceof Error ? error.message : String(error),
+          }))
         }
       } finally {
         abortRef.current = null
@@ -134,6 +192,36 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
       }
     },
     [conversationId, messages, onSaved, persist],
+  )
+
+  /** Répond à une demande d'autorisation de l'agent (autoriser une fois, toujours, refuser). */
+  const approve = useCallback(
+    async (callId: string, decision: ToolDecision) => {
+      const id = conversationId
+      if (id === null) return
+
+      const patchStep = (changes: Partial<AgentStep>) =>
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.steps
+              ? {
+                  ...message,
+                  steps: updateStep(message.steps, callId, changes),
+                }
+              : message,
+          ),
+        )
+
+      // La demande disparaît dès le clic ; le résultat arrivera par le stream.
+      patchStep({ status: "running" })
+      try {
+        await approveTool(id, callId, decision)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        patchStep({ status: "error", output: message })
+      }
+    },
+    [conversationId],
   )
 
   const stop = useCallback(() => abortRef.current?.abort(), [])
@@ -160,7 +248,7 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
     setMessages([])
   }, [])
 
-  return { conversationId, messages, status, send, stop, open, reset }
+  return { conversationId, messages, status, send, stop, open, reset, approve }
 }
 
 function toUIMessage(message: StoredMessage): UIMessage {
@@ -177,5 +265,6 @@ function toUIMessage(message: StoredMessage): UIMessage {
     error: message.error ?? undefined,
     stopped: message.stopped,
     sources: message.sources ?? undefined,
+    steps: message.steps ?? undefined,
   }
 }

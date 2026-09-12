@@ -12,6 +12,8 @@ export interface ChatMessage {
 export interface ModelInfo {
   id: string
   provider: string
+  // Sait appeler des outils : sans ça, pas de mode agent.
+  tools?: boolean
 }
 
 export interface ProviderStatus {
@@ -45,10 +47,41 @@ export interface Source {
   score: number
 }
 
+/** Un appel d'outil de l'agent : ce qu'il a demandé, et ce que ça a donné. */
+export interface AgentStep {
+  id: string
+  name: string
+  // Résumé court : read_file(src/api.ts)
+  summary: string
+  // running et asking n'existent que pendant la réponse ; le serveur renvoie les trois autres.
+  status: "running" | "asking" | "done" | "error" | "denied"
+  output: string
+  // Les arguments de l'appel, envoyés quand il faut l'accord de l'utilisateur.
+  arguments?: Record<string, unknown>
+}
+
+export type ToolDecision = "once" | "always" | "deny"
+
 export type ChatEvent =
   | { type: "sources"; sources: Source[]; warning: string | null }
   | { type: "reasoning"; content: string }
   | { type: "token"; content: string }
+  | { type: "tool_call"; id: string; name: string; summary: string }
+  | {
+      type: "tool_request"
+      id: string
+      name: string
+      summary: string
+      arguments: Record<string, unknown>
+    }
+  | {
+      type: "tool_result"
+      id: string
+      name: string
+      summary: string
+      status: string
+      output: string
+    }
   | { type: "done"; metrics: ChatMetrics }
   | { type: "error"; message: string }
 
@@ -105,6 +138,8 @@ export interface StoredMessage {
   error: string | null
   stopped: boolean
   sources: Source[] | null
+  // Les outils utilisés par l'agent pour produire cette réponse.
+  steps: AgentStep[] | null
   created_at: string
 }
 
@@ -236,7 +271,7 @@ export async function* streamMessage(
   model: ModelInfo,
   content: string,
   signal: AbortSignal,
-  useDocuments = false,
+  { useDocuments = false, agent = false }: { useDocuments?: boolean; agent?: boolean } = {},
 ): AsyncGenerator<ChatEvent> {
   const response = await request(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -246,10 +281,24 @@ export async function* streamMessage(
       model: model.id,
       content,
       use_documents: useDocuments,
+      agent,
     }),
     signal,
   })
   yield* readEvents(response)
+}
+
+/** Répond à une demande d'autorisation de l'agent ; le stream en cours l'attend. */
+export async function approveTool(
+  conversationId: string,
+  callId: string,
+  decision: ToolDecision,
+): Promise<void> {
+  await request(`/api/conversations/${conversationId}/approvals/${callId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision }),
+  })
 }
 
 // --- Comparaisons ---
@@ -268,7 +317,10 @@ export async function createComparison(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt,
-      contenders: models.map((model) => ({ provider: model.provider, model: model.id })),
+      contenders: models.map((model) => ({
+        provider: model.provider,
+        model: model.id,
+      })),
     }),
   })
   return response.json()
@@ -345,7 +397,9 @@ export async function listDirectories(
   signal?: AbortSignal,
 ): Promise<DirectoryListing> {
   const query = new URLSearchParams({ path })
-  const response = await request(`/api/workspace/directories?${query}`, { signal })
+  const response = await request(`/api/workspace/directories?${query}`, {
+    signal,
+  })
   return response.json()
 }
 
@@ -360,7 +414,11 @@ export async function* streamChat(
   const response = await request("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider: model.provider, model: model.id, messages }),
+    body: JSON.stringify({
+      provider: model.provider,
+      model: model.id,
+      messages,
+    }),
     signal,
   })
   yield* readEvents(response)
@@ -396,10 +454,18 @@ function toChatEvent({ event, data }: SSEMessage): ChatEvent | null {
   const payload = JSON.parse(data)
   switch (event) {
     case "sources":
-      return { type: "sources", sources: payload.sources, warning: payload.warning ?? null }
+      return {
+        type: "sources",
+        sources: payload.sources,
+        warning: payload.warning ?? null,
+      }
     case "reasoning":
     case "token":
       return { type: event, content: payload.content }
+    case "tool_call":
+    case "tool_request":
+    case "tool_result":
+      return { type: event, ...payload }
     case "done":
       return { type: "done", metrics: payload }
     case "error":

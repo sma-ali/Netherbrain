@@ -5,18 +5,21 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { Metrics } from "@/components/metrics"
+import { ToolStep } from "@/components/tool-step"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import type { UIMessage } from "@/hooks/use-chat"
-import type { Source } from "@/lib/api"
+import type { Source, ToolDecision } from "@/lib/api"
 
 interface MessageProps {
   message: UIMessage
   streaming: boolean
   /** Afficher le modèle au-dessus de la réponse (inutile quand une colonne le montre déjà). */
   showModel?: boolean
+  /** Réponse à une demande d'autorisation de l'agent. */
+  onApprove?: (callId: string, decision: ToolDecision) => void
 }
 
-export function Message({ message, streaming, showModel = true }: MessageProps) {
+export function Message({ message, streaming, showModel = true, onApprove }: MessageProps) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -44,6 +47,14 @@ export function Message({ message, streaming, showModel = true }: MessageProps) 
       )}
 
       {message.reasoning && <Reasoning text={message.reasoning} active={thinking} />}
+
+      {message.steps && message.steps.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {message.steps.map((step) => (
+            <ToolStep key={step.id} step={step} onApprove={onApprove} />
+          ))}
+        </div>
+      )}
 
       {message.content ? (
         // react-markdown n'affiche jamais de HTML brut venant du modèle : pas de XSS possible.
