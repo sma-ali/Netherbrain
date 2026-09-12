@@ -35,8 +35,9 @@ services:
       # Le dossier de travail (les projets), monté juste en dessous.
       NETHERBRAIN_WORKSPACE_ROOT: /workspace
     volumes:
-      # Vos projets, ~/Projects par défaut. En lecture seule (« ro ») : l'API ne fait que les lire.
-      - ${NETHERBRAIN_WORKSPACE:-~/Projects}:/workspace:ro
+      # Vos projets, ~/Projects par défaut. En lecture et écriture : l'agent modifie les
+      # fichiers du projet, mais seulement après votre accord, action par action.
+      - ${NETHERBRAIN_WORKSPACE:-~/Projects}:/workspace
     extra_hosts:
       - "host.docker.internal:host-gateway" # intégré à Docker Desktop, nécessaire sous Linux
     depends_on:

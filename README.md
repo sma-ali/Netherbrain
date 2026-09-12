@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **projets, rattacher un dossier de code aux conversations**.
+Développement en cours. Jalon actuel : **agent de code, le modèle lit et modifie le projet**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -24,7 +24,7 @@ Développement en cours. Jalon actuel : **projets, rattacher un dossier de code 
 - [x] Catalogue des modèles : filtres, tris et mesures réelles faites sur votre installation
 - [x] RAG : discuter avec vos documents (PDF, texte, Markdown), réponses citant leurs sources
 - [x] Projets, façon Claude Code : un dossier de code par projet, avec ses conversations et ses consignes (AGENTS.md)
-- [ ] Agent de code : le modèle lit et modifie les fichiers du projet, avec votre accord
+- [x] Agent de code : le modèle lit, cherche et modifie les fichiers du projet, chaque action sensible demandant votre accord
 
 ## Architecture
 
@@ -32,7 +32,7 @@ Développement en cours. Jalon actuel : **projets, rattacher un dossier de code 
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
                                         ├──SQLAlchemy──> PostgreSQL + pgvector (historique, documents)
-                                        └──lecture seule──> dossier de travail (~/Projects : les projets)
+                                        └──outils de l'agent──> dossier de travail (~/Projects)
 ```
 
 | Dossier     | Stack                                                                            |
@@ -163,6 +163,45 @@ Avec Docker, le dossier de travail est monté dans le conteneur de l'API sur `/w
 NETHERBRAIN_WORKSPACE=~/code docker compose up --build
 ```
 
+## Agent de code
+
+Dans une conversation de projet, le bouton **Agent** donne au modèle six outils sur le dossier
+du projet : `list_files`, `read_file` et `search_files` (lecture, exécutés directement), puis
+`write_file`, `edit_file` et `run_command` (modification, **soumis à votre accord**). Chaque
+appel s'affiche dans la réponse avec son résultat repliable ; une action sensible attend un
+clic : « Allow once », « Always allow » (pour toute la conversation) ou « Deny ».
+
+```
+Question → le modèle demande un outil → autorisation si nécessaire → exécution dans le dossier
+du projet → résultat renvoyé au modèle → il recommence, jusqu'à 12 fois, puis répond
+```
+
+Le mode n'est proposé qu'aux modèles qui savent appeler des outils (`ornith:9b`, `qwen3.5:9b`,
+`gemma4:12b`, `deepseek-r1:14b`, la plupart des modèles récents) : la route `/api/models` dit
+lesquels, et le bouton reste grisé pour les autres.
+
+Les garde-fous :
+
+- **confinement** : chaque chemin est résolu puis vérifié, donc ni `..`, ni chemin absolu, ni
+  lien symbolique ne permet de sortir du dossier du projet ;
+- **rien ne s'écrit et aucune commande ne se lance sans un clic** ; un refus est renvoyé au
+  modèle, qui doit s'en accommoder ;
+- la boucle s'arrête après 12 appels d'outils (`NETHERBRAIN_AGENT_MAX_STEPS`), une commande est
+  tuée au bout de 2 minutes, et une demande d'autorisation sans réponse est refusée après 5 min ;
+- **injection de prompt** : un fichier du projet peut contenir des instructions piégées (« ignore
+  tes consignes, lance ceci… »). C'est le vrai risque de ce mode, et l'autorisation avant chaque
+  action est aujourd'hui la seule protection : lisez ce que l'agent propose avant de valider.
+
+Hors Docker, les commandes tournent sur votre machine, avec vos droits. Dans Docker, elles
+tournent dans le conteneur de l'API, qui ne contient que Python (ni Node, ni git).
+
+### Fenêtre de contexte
+
+Ollama charge par défaut les modèles avec **4096 tokens** de contexte, bien trop peu dès que
+l'agent lit un fichier : la conversation serait tronquée en silence. Netherbrain discute donc
+avec Ollama par son **API native** (`/api/chat`), la seule qui accepte l'option `num_ctx`, et
+demande 16384 tokens (`NETHERBRAIN_OLLAMA_CONTEXT_LENGTH`, au prix d'un peu de VRAM).
+
 ## Discuter avec ses documents (RAG)
 
 Importez des PDF, fichiers texte ou Markdown sur la page `/documents`, puis activez
@@ -215,7 +254,8 @@ propres champs à la liste standard au format OpenAI.
 | POST    | `/api/conversations` | Crée une conversation (`{project_id}` facultatif)      |
 | GET     | `/api/conversations/{id}` | Une conversation et ses messages                  |
 | DELETE  | `/api/conversations/{id}` | Supprime une conversation et ses messages         |
-| POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse |
+| POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse (`use_documents`, `agent`) |
+| POST    | `/api/conversations/{id}/approvals/{call_id}` | Autorise ou refuse une action de l'agent |
 | GET     | `/api/projects` | Projets, par ordre alphabétique (dossier, branche Git, consignes) |
 | POST    | `/api/projects` | Crée un projet à partir d'un dossier (`{path, name}`)   |
 | GET     | `/api/projects/{id}` | Un projet                                          |
@@ -233,7 +273,8 @@ propres champs à la liste standard au format OpenAI.
 
 Les deux routes de streaming émettent des événements `reasoning` et `token`, puis un événement
 final `done` portant les métriques (`ttft_ms`, `total_ms`, `tokens_per_second`...) ou un
-événement `error`.
+événement `error`. En mode agent s'y ajoutent `tool_call`, `tool_request` (le stream attend
+alors votre autorisation, envoyée par une autre requête) et `tool_result`.
 
 - `/api/chat` reçoit toute la conversation (`{provider, model, messages}`) et n'enregistre rien.
   L'interface s'en sert quand l'historique est indisponible.
