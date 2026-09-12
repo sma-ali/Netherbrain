@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 import openai
 from openai import AsyncOpenAI
@@ -11,6 +12,7 @@ from netherbrain.schemas import (
     ReasoningEvent,
     StreamEvent,
     TokenEvent,
+    ToolCallEvent,
     UsageEvent,
 )
 
@@ -77,14 +79,22 @@ class OpenAICompatibleProvider:
         return sorted(cards, key=lambda card: card.id)
 
     async def stream_chat(
-        self, model: str, messages: list[ChatMessage]
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        """Streame la réponse. Avec `tools`, le modèle peut demander à en utiliser un."""
+        # Les appels d'outils arrivent en morceaux, à assembler par numéro d'appel.
+        calls: dict[int, dict[str, str]] = {}
         try:
             stream = await self._client.chat.completions.create(
                 model=model,
-                messages=[message.model_dump() for message in messages],
+                # exclude_none : un `tool_call_id: null` ferait refuser la requête.
+                messages=[message.model_dump(exclude_none=True) for message in messages],
                 stream=True,
                 stream_options={"include_usage": True},
+                **({"tools": tools} if tools else {}),
             )
             async for chunk in stream:
                 if chunk.usage:
@@ -99,5 +109,22 @@ class OpenAICompatibleProvider:
                         yield ReasoningEvent(content=reasoning)
                     if choice.delta.content:
                         yield TokenEvent(content=choice.delta.content)
+                    for fragment in choice.delta.tool_calls or []:
+                        call = calls.setdefault(
+                            fragment.index, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if fragment.id:
+                            call["id"] = fragment.id
+                        if fragment.function and fragment.function.name:
+                            call["name"] = fragment.function.name
+                        if fragment.function and fragment.function.arguments:
+                            call["arguments"] += fragment.function.arguments
         except openai.APIError as exc:
             raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc
+
+        # Les appels complets partent à la fin du stream, dans l'ordre demandé par le modèle.
+        for index in sorted(calls):
+            call = calls[index]
+            yield ToolCallEvent(
+                id=call["id"] or f"call_{index}", name=call["name"], arguments=call["arguments"]
+            )

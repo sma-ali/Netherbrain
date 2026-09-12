@@ -8,8 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
+    # Les outils demandés par le modèle (role="assistant"), au format d'OpenAI.
+    tool_calls: list[dict[str, Any]] | None = None
+    # La réponse à un appel d'outil (role="tool") : l'identifiant de l'appel concerné.
+    tool_call_id: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -21,6 +25,8 @@ class ChatRequest(BaseModel):
 class ModelInfo(BaseModel):
     id: str
     provider: str
+    # Sait appeler des outils : sans ça, pas de mode agent.
+    tools: bool = False
 
 
 class ProviderStatus(BaseModel):
@@ -104,6 +110,25 @@ class Source(BaseModel):
     score: float
 
 
+class AgentStep(BaseModel):
+    """Un appel d'outil de l'agent, tel qu'on l'affiche et l'enregistre."""
+
+    id: str
+    name: str
+    # Résumé court affiché dans l'interface : read_file(src/api.ts)
+    summary: str
+    # done : exécuté ; error : l'outil a échoué ; denied : l'utilisateur a refusé.
+    status: Literal["done", "error", "denied"]
+    output: str
+
+
+class ApprovalRequest(BaseModel):
+    """La réponse de l'utilisateur à une demande d'autorisation de l'agent."""
+
+    # once : cette fois ; always : cet outil pour toute la conversation ; deny : refus.
+    decision: Literal["once", "always", "deny"]
+
+
 class StoredMessage(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -117,6 +142,8 @@ class StoredMessage(BaseModel):
     error: str | None = None
     stopped: bool = False
     sources: list[Source] | None = None
+    # Les outils utilisés par l'agent pour produire cette réponse.
+    steps: list[AgentStep] | None = None
     created_at: datetime
 
 
@@ -130,6 +157,8 @@ class SendMessageRequest(BaseModel):
     content: str = Field(min_length=1)
     # Chercher dans les documents importés et s'appuyer sur eux pour répondre (RAG).
     use_documents: bool = False
+    # Mode agent : le modèle peut lire et modifier les fichiers du projet avec ses outils.
+    agent: bool = False
 
 
 # --- Projets et dossier de travail ---
@@ -255,6 +284,16 @@ class ReasoningEvent(BaseModel):
     content: str
 
 
+class ToolCallEvent(BaseModel):
+    """Le modèle demande à utiliser un outil."""
+
+    type: Literal["tool_call"] = "tool_call"
+    id: str
+    name: str
+    # Les arguments tels que le modèle les a écrits : du JSON, parfois mal formé.
+    arguments: str
+
+
 class UsageEvent(BaseModel):
     """Décompte des tokens, envoyé une seule fois à la fin du stream."""
 
@@ -263,4 +302,4 @@ class UsageEvent(BaseModel):
     completion_tokens: int
 
 
-StreamEvent = TokenEvent | ReasoningEvent | UsageEvent
+StreamEvent = TokenEvent | ReasoningEvent | UsageEvent | ToolCallEvent

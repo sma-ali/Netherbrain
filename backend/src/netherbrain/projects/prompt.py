@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from netherbrain.agent.prompt import INSTRUCTIONS as AGENT_INSTRUCTIONS
 from netherbrain.projects.workspace import instructions_file
 
 # De quoi donner une idée du projet sans noyer le modèle (ni sa fenêtre de contexte).
@@ -40,10 +41,11 @@ def read_instructions(folder: Path) -> tuple[str, str] | None:
     return path.name, text
 
 
-def build_project_context(name: str, folder: Path) -> str:
+def build_project_context(name: str, folder: Path, agent: bool = False) -> str:
     """Le message système qui situe la conversation dans son projet.
 
     En anglais, comme les autres consignes : c'est la langue que les modèles suivent le mieux.
+    Avec `agent`, le modèle dispose d'outils pour lire et modifier le dossier.
     """
     parts = [
         f'The user is working on the project "{name}". '
@@ -53,7 +55,10 @@ def build_project_context(name: str, folder: Path) -> str:
         filename, text = instructions
         parts.append(f"The project's instructions, from {filename}. Follow them:\n\n{text}")
     parts.append(
-        "You cannot open the project's files yourself: when you need to see some code, "
-        "ask the user to paste it. Always answer in the language of the user's message."
+        AGENT_INSTRUCTIONS
+        if agent
+        else "You cannot open the project's files yourself: when you need to see some code, "
+        "ask the user to paste it."
     )
+    parts.append("Always answer in the language of the user's message.")
     return "\n\n".join(parts)

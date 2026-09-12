@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     # Fournisseur local : toujours activé.
     ollama_base_url: str = "http://localhost:11434/v1"
+    # Fenêtre de contexte demandée à Ollama (0 : sa valeur par défaut, 4096 tokens, trop
+    # courte pour l'agent). Plus elle est grande, plus le modèle occupe de VRAM.
+    ollama_context_length: int = 16384
 
     # Fournisseurs distants : activés seulement si leur clé d'API est renseignée.
     # SecretStr garde les clés hors des logs, des tracebacks et de repr().
@@ -44,6 +47,16 @@ class Settings(BaseSettings):
     # Le dossier de travail : chaque projet est l'un de ses sous-dossiers, et l'application
     # n'accède jamais à rien en dehors. Dans Docker, c'est le dossier monté sur /workspace.
     workspace_root: Path = Path.home() / "Projects"
+
+    # --- Agent de code ---
+    # Nombre maximum d'allers-retours modèle → outils pour une seule question.
+    agent_max_steps: int = 12
+    # Taille maximale du résultat d'un outil renvoyé au modèle (en caractères).
+    agent_max_output_chars: int = 8000
+    # Secondes accordées à une commande lancée par l'agent, puis à l'utilisateur pour
+    # accepter ou refuser une action.
+    agent_command_timeout: int = 120
+    agent_approval_timeout: float = 300.0
 
     cors_origins: list[str] = ["http://localhost:3000"]
 

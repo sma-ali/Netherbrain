@@ -23,11 +23,18 @@ async def list_models(registry: Registry) -> ModelsResponse:
     """Les modèles de tous les fournisseurs, plus l'état de chacun.
 
     Répond toujours 200 : un fournisseur injoignable apparaît comme indisponible
-    au lieu de faire échouer toute la requête.
+    au lieu de faire échouer toute la requête. Les fiches complètes servent ici
+    à savoir quels modèles savent appeler des outils (mode agent).
     """
-    results = await registry.list_all()
+    results = await registry.describe_all()
     return ModelsResponse(
-        models=[ModelInfo(id=model, provider=r.name) for r in results for model in r.items],
+        models=[
+            ModelInfo(id=card.id, provider=result.name, tools="tools" in card.capabilities)
+            for result in results
+            for card in result.items
+            # Les modèles d'embeddings ne savent pas discuter.
+            if "embedding" not in card.capabilities
+        ],
         providers=provider_statuses(results),
     )
 

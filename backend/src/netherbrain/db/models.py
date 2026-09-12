@@ -86,6 +86,10 @@ class Message(Base):
     sources: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON().with_variant(JSONB(), "postgresql")
     )
+    # Outils utilisés par l'agent pour produire la réponse, dans l'ordre.
+    steps: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages", lazy="raise")

@@ -1,11 +1,22 @@
+import asyncio
+import json
+
 import httpx
 import openai
 import pytest
 
 from netherbrain.api.deps import build_registry
 from netherbrain.config import Settings
+from netherbrain.providers import OllamaProvider, ProviderError
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
 from netherbrain.providers.openai_compatible import describe_error
+from netherbrain.schemas import (
+    ChatMessage,
+    ReasoningEvent,
+    TokenEvent,
+    ToolCallEvent,
+    UsageEvent,
+)
 
 REQUEST = httpx.Request("POST", "http://provider.test/v1/chat/completions")
 
@@ -95,3 +106,97 @@ def test_an_http_error_keeps_only_the_provider_message():
 
 def test_a_network_error_is_described_plainly():
     assert describe_error(openai.APIConnectionError(request=REQUEST)) == "Connection error."
+
+
+# --- Ollama : l'API native, seule à accepter la taille du contexte ---
+
+
+def collect(stream) -> list:
+    async def drain() -> list:
+        return [event async for event in stream]
+
+    return asyncio.run(drain())
+
+
+def ollama_stream(*lines: dict) -> httpx.MockTransport:
+    """Un faux Ollama qui rejoue des morceaux de stream, une ligne de JSON chacun."""
+    body = "\n".join(json.dumps(line) for line in lines)
+    return httpx.MockTransport(lambda request: httpx.Response(200, text=body))
+
+
+def test_ollama_streams_thinking_content_and_tool_calls():
+    transport = ollama_stream(
+        {"message": {"role": "assistant", "thinking": "Hmm"}, "done": False},
+        {"message": {"role": "assistant", "content": "Bonjour"}, "done": False},
+        {
+            "message": {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "call_7", "function": {"name": "read_file", "arguments": {"path": "a"}}}
+                ],
+            },
+            "done": False,
+        },
+        {
+            "message": {"role": "assistant", "content": ""},
+            "done": True,
+            "prompt_eval_count": 12,
+            "eval_count": 3,
+        },
+    )
+    provider = OllamaProvider("http://ollama.test:11434/v1", transport=transport)
+
+    events = collect(provider.stream_chat("m", [ChatMessage(role="user", content="salut")]))
+
+    assert events == [
+        ReasoningEvent(content="Hmm"),
+        TokenEvent(content="Bonjour"),
+        ToolCallEvent(id="call_7", name="read_file", arguments='{"path": "a"}'),
+        UsageEvent(prompt_tokens=12, completion_tokens=3),
+    ]
+
+
+def test_ollama_asks_for_a_context_window_and_converts_tool_calls():
+    sent = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, text=json.dumps({"message": {"content": "ok"}, "done": True}))
+
+    provider = OllamaProvider(
+        "http://ollama.test:11434/v1",
+        context_length=8192,
+        transport=httpx.MockTransport(handler),
+    )
+    history = [
+        ChatMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "a"}'},
+                }
+            ],
+        ),
+        ChatMessage(role="tool", content="contenu du fichier", tool_call_id="c1"),
+    ]
+
+    collect(provider.stream_chat("m", history, tools=[{"type": "function"}]))
+
+    assert sent[0]["options"] == {"num_ctx": 8192}
+    assert sent[0]["tools"] == [{"type": "function"}]
+    # Les arguments repartent en objet JSON, comme l'attend l'API native.
+    assert sent[0]["messages"][0]["tool_calls"][0]["function"]["arguments"] == {"path": "a"}
+    assert sent[0]["messages"][1] == {"role": "tool", "content": "contenu du fichier"}
+
+
+def test_an_unreachable_ollama_is_reported():
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    provider = OllamaProvider("http://ollama.test:11434/v1", transport=httpx.MockTransport(refuse))
+
+    with pytest.raises(ProviderError, match="ollama"):
+        collect(provider.stream_chat("m", [ChatMessage(role="user", content="salut")]))

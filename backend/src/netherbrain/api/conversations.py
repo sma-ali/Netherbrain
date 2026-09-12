@@ -3,13 +3,16 @@
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import anyio
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from netherbrain.agent.tools import Toolbox
 from netherbrain.api.deps import (
+    ApprovalsDep,
     DbSession,
     EmbedderDep,
     Registry,
@@ -18,7 +21,13 @@ from netherbrain.api.deps import (
     WorkspaceDep,
     get_provider_or_404,
 )
-from netherbrain.api.streaming import StreamResult, sse, sse_response, stream_answer
+from netherbrain.api.streaming import (
+    StreamResult,
+    sse,
+    sse_response,
+    stream_agent,
+    stream_answer,
+)
 from netherbrain.db.models import Conversation
 from netherbrain.db.repository import (
     ConversationRepository,
@@ -27,9 +36,11 @@ from netherbrain.db.repository import (
     make_title,
 )
 from netherbrain.projects.prompt import build_project_context
+from netherbrain.projects.workspace import Workspace
 from netherbrain.rag.prompt import build_context
 from netherbrain.rag.retrieval import find_sources
 from netherbrain.schemas import (
+    ApprovalRequest,
     ChatMessage,
     ConversationDetail,
     ConversationSummary,
@@ -50,6 +61,17 @@ async def get_or_404(
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
+
+
+async def project_of(
+    session: DbSession, conversation: Conversation, workspace: Workspace
+) -> tuple[str, Path] | None:
+    """Le nom et le dossier du projet de la conversation, si son dossier existe encore."""
+    if conversation.project_id is None:
+        return None
+    project = await ProjectRepository(session).get(conversation.project_id)
+    folder = workspace.find(project.path) if project else None
+    return (project.name, folder) if project and folder else None
 
 
 @router.get("")
@@ -80,9 +102,13 @@ async def get_conversation(conversation_id: uuid.UUID, session: DbSession) -> Co
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_conversation(conversation_id: uuid.UUID, session: DbSession) -> None:
+async def delete_conversation(
+    conversation_id: uuid.UUID, session: DbSession, approvals: ApprovalsDep
+) -> None:
     if not await ConversationRepository(session).delete(conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Les outils autorisés « pour toute la conversation » disparaissent avec elle.
+    approvals.forget(conversation_id)
     await session.commit()
 
 
@@ -96,13 +122,15 @@ async def send_message(
     embedder: EmbedderDep,
     settings: SettingsDep,
     workspace: WorkspaceDep,
+    approvals: ApprovalsDep,
 ) -> StreamingResponse:
     """Enregistre le message de l'utilisateur, puis streame et enregistre la réponse du modèle.
 
     Le serveur reconstitue lui-même l'historique depuis la base : le client n'envoie que
-    le nouveau message. Dans un projet, le modèle reçoit une présentation du projet. Avec
-    `use_documents`, les extraits de documents les plus proches de la question sont ajoutés
-    au prompt (RAG) et renvoyés comme sources.
+    le nouveau message. Dans un projet, le modèle reçoit une présentation du projet, et
+    avec `agent` il peut se servir des outils qui lisent et modifient son dossier. Avec
+    `use_documents`, les extraits de documents les plus proches de la question sont
+    ajoutés au prompt (RAG) et renvoyés comme sources.
     """
     repository = ConversationRepository(session)
     conversation = await get_or_404(repository, conversation_id)
@@ -113,15 +141,16 @@ async def send_message(
     ]
     history.append(ChatMessage(role="user", content=request.content))
 
+    project = await project_of(session, conversation, workspace)
+    if request.agent and project is None:
+        raise HTTPException(status_code=400, detail="Agent mode needs a conversation in a project")
+
     # Les consignes passent en message « système », en tête de l'historique : elles guident
     # la réponse sans apparaître dans la conversation affichée. Un seul message système,
     # car certains modèles ignorent ceux qui suivent le premier.
     system: list[str] = []
-    if conversation.project_id is not None:
-        project = await ProjectRepository(session).get(conversation.project_id)
-        folder = workspace.find(project.path) if project else None
-        if project and folder:
-            system.append(build_project_context(project.name, folder))
+    if project is not None:
+        system.append(build_project_context(*project, agent=request.agent))
 
     sources: list[Source] = []
     warning: str | None = None
@@ -133,6 +162,16 @@ async def send_message(
         system.append(build_context(sources))
     if system:
         history.insert(0, ChatMessage(role="system", content="\n\n".join(system)))
+
+    toolbox = (
+        Toolbox(
+            project[1],
+            max_output_chars=settings.agent_max_output_chars,
+            command_timeout=settings.agent_command_timeout,
+        )
+        if request.agent and project is not None
+        else None
+    )
 
     if conversation.title is None:
         conversation.title = make_title(request.content)
@@ -148,7 +187,20 @@ async def send_message(
                     "sources",
                     {"sources": [s.model_dump(mode="json") for s in sources], "warning": warning},
                 )
-            async for chunk in stream_answer(provider, request.model, history, result):
+            if toolbox is not None:
+                answer = stream_agent(
+                    provider,
+                    request.model,
+                    history,
+                    result,
+                    toolbox=toolbox,
+                    approvals=approvals,
+                    conversation_id=conversation_id,
+                    max_steps=settings.agent_max_steps,
+                )
+            else:
+                answer = stream_answer(provider, request.model, history, result)
+            async for chunk in answer:
                 yield chunk
         finally:
             # Même si le client coupe la connexion en pleine réponse (bouton stop, onglet
@@ -158,6 +210,15 @@ async def send_message(
                 await save_answer(session_factory, conversation_id, request, result, sources)
 
     return sse_response(event_stream())
+
+
+@router.post("/{conversation_id}/approvals/{call_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def answer_approval(
+    conversation_id: uuid.UUID, call_id: str, request: ApprovalRequest, approvals: ApprovalsDep
+) -> None:
+    """La réponse de l'utilisateur à une demande d'autorisation, attendue par le stream."""
+    if not approvals.answer(conversation_id, call_id, request.decision):
+        raise HTTPException(status_code=404, detail="No pending approval for this call")
 
 
 async def save_answer(
@@ -181,6 +242,7 @@ async def save_answer(
                 error=result.error,
                 stopped=not result.finished and result.error is None,
                 sources=[s.model_dump(mode="json") for s in sources] or None,
+                steps=result.steps or None,
             )
             await session.commit()
     except SQLAlchemyError, OSError:

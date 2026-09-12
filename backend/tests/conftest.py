@@ -12,7 +12,14 @@ from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
-from netherbrain.api.deps import get_embedder, get_registry, get_session_factory, get_workspace
+from netherbrain.agent.approvals import ApprovalRegistry
+from netherbrain.api.deps import (
+    get_approvals,
+    get_embedder,
+    get_registry,
+    get_session_factory,
+    get_workspace,
+)
 from netherbrain.db.models import EMBEDDING_DIMENSIONS, Base
 from netherbrain.db.session import enable_pgvector
 from netherbrain.main import app
@@ -34,17 +41,25 @@ class FakeProvider:
         name: str = "fake",
         models: list[str] | None = None,
         events: list[StreamEvent] | None = None,
+        turns: list[list[StreamEvent]] | None = None,
         fail: bool = False,
         list_delay: float = 0.0,
         local: bool = False,
+        capabilities: list[str] | None = None,
     ) -> None:
         self.name = name
         self.local = local
         self.models = models if models is not None else [f"{name}-model"]
         self.events = events or []
+        # Un scénario par tour de boucle de l'agent ; sinon `events` est rejoué à chaque tour.
+        self.turns = list(turns) if turns is not None else None
         self.fail = fail
         self.list_delay = list_delay
+        self.capabilities = capabilities or []
         self.received: list[ChatMessage] = []
+        # Les historiques envoyés au modèle, un par appel (utile en mode agent).
+        self.histories: list[list[ChatMessage]] = []
+        self.tools: list[dict] | None = None
 
     async def list_models(self) -> list[str]:
         if self.list_delay:
@@ -55,15 +70,24 @@ class FakeProvider:
 
     async def describe_models(self) -> list[ModelCard]:
         return [
-            ModelCard(id=model_id, provider=self.name, local=self.local, name=model_id)
+            ModelCard(
+                id=model_id,
+                provider=self.name,
+                local=self.local,
+                name=model_id,
+                capabilities=list(self.capabilities),
+            )
             for model_id in await self.list_models()
         ]
 
     async def stream_chat(
-        self, model: str, messages: list[ChatMessage]
+        self, model: str, messages: list[ChatMessage], tools: list[dict] | None = None
     ) -> AsyncIterator[StreamEvent]:
         self.received = messages
-        for scripted in self.events:
+        self.histories.append(list(messages))
+        self.tools = tools
+        scenario = self.events if self.turns is None else (self.turns.pop(0) if self.turns else [])
+        for scripted in scenario:
             yield scripted
         if self.fail:
             raise ProviderError(f"{self.name}: connection lost")
@@ -176,6 +200,14 @@ def workspace(tmp_path: Path) -> Path:
     root.mkdir()
     app.dependency_overrides[get_workspace] = lambda: Workspace(root)
     return root
+
+
+@pytest.fixture
+def approvals() -> ApprovalRegistry:
+    """Un registre d'autorisations neuf pour le test en cours, avec une attente courte."""
+    registry = ApprovalRegistry(timeout=5.0)
+    app.dependency_overrides[get_approvals] = lambda: registry
+    return registry
 
 
 def parse_sse(body: str) -> list[tuple[str, dict]]:

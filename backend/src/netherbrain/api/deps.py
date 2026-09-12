@@ -13,6 +13,7 @@ from fastapi import Depends, HTTPException
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from netherbrain.agent.approvals import ApprovalRegistry
 from netherbrain.config import Settings, get_settings
 from netherbrain.db.models import EMBEDDING_DIMENSIONS
 from netherbrain.db.session import create_engine
@@ -40,7 +41,7 @@ OPENROUTER_HEADERS = {
 def build_registry(settings: Settings) -> ProviderRegistry:
     """Ollama est toujours présent ; chaque fournisseur distant s'active avec sa clé d'API."""
     providers: list[LLMProvider] = [
-        OllamaProvider(settings.ollama_base_url),
+        OllamaProvider(settings.ollama_base_url, context_length=settings.ollama_context_length),
     ]
     if key := _secret(settings.openrouter_api_key):
         providers.append(
@@ -139,3 +140,12 @@ def get_workspace() -> Workspace:
 
 
 WorkspaceDep = Annotated[Workspace, Depends(get_workspace)]
+
+
+@lru_cache
+def get_approvals() -> ApprovalRegistry:
+    """Un seul registre pour toute l'application : les demandes vivent en mémoire."""
+    return ApprovalRegistry(timeout=get_settings().agent_approval_timeout)
+
+
+ApprovalsDep = Annotated[ApprovalRegistry, Depends(get_approvals)]

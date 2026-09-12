@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import Any, Protocol
 
 from netherbrain.schemas import ChatMessage, ModelCard, StreamEvent
 
@@ -24,5 +24,8 @@ class LLMProvider(Protocol):
     async def describe_models(self) -> list[ModelCard]: ...
 
     def stream_chat(
-        self, model: str, messages: list[ChatMessage]
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]: ...
