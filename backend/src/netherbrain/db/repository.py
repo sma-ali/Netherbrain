@@ -1,10 +1,10 @@
-"""Accès aux conversations en base : toutes les requêtes SQL passent par ici."""
+"""Accès aux données en base : toutes les requêtes SQL passent par ici."""
 
 import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import Select, delete, func, select, union_all, update
+from sqlalchemy import Select, and_, delete, func, or_, select, union_all, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -34,19 +34,28 @@ class ConversationRepository:
         self._session = session
 
     async def list_recent(self, limit: int = 100) -> Sequence[Conversation]:
+        # Seulement celles qui ont au moins un message : joindre un fichier crée la
+        # conversation, qui n'apparaît qu'une fois la première question envoyée.
+        has_messages = select(Message.id).where(Message.conversation_id == Conversation.id).exists()
         result = await self._session.scalars(
-            select(Conversation).order_by(Conversation.updated_at.desc()).limit(limit)
+            select(Conversation)
+            .where(has_messages)
+            .order_by(Conversation.updated_at.desc())
+            .limit(limit)
         )
         return result.all()
 
     async def get(self, conversation_id: uuid.UUID) -> Conversation | None:
-        # selectinload charge tous les messages en une seule requête supplémentaire,
-        # au lieu d'une requête par message (le fameux problème « N+1 »).
+        # selectinload charge tous les messages en une seule requête supplémentaire (puis leurs
+        # fichiers joints en une autre), au lieu d'une requête par message : le problème « N+1 ».
         return await self._session.scalar(
             select(Conversation)
             .where(Conversation.id == conversation_id)
-            .options(selectinload(Conversation.messages))
+            .options(selectinload(Conversation.messages).selectinload(Message.attachments))
         )
+
+    async def exists(self, conversation_id: uuid.UUID) -> bool:
+        return await self._session.get(Conversation, conversation_id) is not None
 
     async def create(
         self, title: str | None = None, project_id: uuid.UUID | None = None
@@ -57,7 +66,7 @@ class ConversationRepository:
         return conversation
 
     async def delete(self, conversation_id: uuid.UUID) -> bool:
-        """Supprime une conversation ; la base supprime ses messages (ON DELETE CASCADE)."""
+        """Supprime une conversation ; la base supprime ses messages et fichiers (CASCADE)."""
         result = await self._session.execute(
             delete(Conversation).where(Conversation.id == conversation_id)
         )
@@ -177,29 +186,71 @@ class ComparisonRepository:
 
 
 class DocumentRepository:
-    """Les documents importés et leurs morceaux ; comme ailleurs, sans commit()."""
+    """Les fichiers joints aux conversations et leurs morceaux ; comme ailleurs, sans commit()."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_recent(self) -> Sequence[Document]:
-        result = await self._session.scalars(select(Document).order_by(Document.created_at.desc()))
+    async def list_for(self, conversation_id: uuid.UUID) -> Sequence[Document]:
+        result = await self._session.scalars(
+            select(Document)
+            .where(Document.conversation_id == conversation_id)
+            .order_by(Document.id)
+        )
         return result.all()
 
-    async def create(self, name: str, content_type: str, size_bytes: int) -> Document:
-        document = Document(name=name, content_type=content_type, size_bytes=size_bytes)
+    async def find(
+        self, conversation_id: uuid.UUID, document_ids: list[uuid.UUID]
+    ) -> Sequence[Document]:
+        """Ceux de ces fichiers qui appartiennent bien à la conversation."""
+        result = await self._session.scalars(
+            select(Document).where(
+                Document.conversation_id == conversation_id, Document.id.in_(document_ids)
+            )
+        )
+        return result.all()
+
+    async def create(
+        self,
+        conversation_id: uuid.UUID,
+        name: str,
+        content_type: str,
+        size_bytes: int,
+        path: str | None = None,
+    ) -> Document:
+        document = Document(
+            conversation_id=conversation_id,
+            name=name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            path=path,
+        )
         self._session.add(document)
         await self._session.flush()
         return document
 
-    async def delete(self, document_id: uuid.UUID) -> bool:
-        """Supprime un document ; la base supprime ses morceaux (ON DELETE CASCADE)."""
-        result = await self._session.execute(delete(Document).where(Document.id == document_id))
+    async def delete(self, conversation_id: uuid.UUID, document_id: uuid.UUID) -> bool:
+        """Retire un fichier ; la base supprime ses morceaux (ON DELETE CASCADE)."""
+        result = await self._session.execute(
+            delete(Document).where(
+                Document.id == document_id, Document.conversation_id == conversation_id
+            )
+        )
         return result.rowcount > 0
 
     async def mark(self, document_id: uuid.UUID, **fields: Any) -> None:
         await self._session.execute(
             update(Document).where(Document.id == document_id).values(**fields)
+        )
+
+    async def attach(
+        self, conversation_id: uuid.UUID, document_ids: list[uuid.UUID], message_id: uuid.UUID
+    ) -> None:
+        """Rattache les fichiers au message de l'utilisateur qui les envoie."""
+        await self._session.execute(
+            update(Document)
+            .where(Document.conversation_id == conversation_id, Document.id.in_(document_ids))
+            .values(message_id=message_id)
         )
 
     async def add_chunks(
@@ -217,14 +268,34 @@ class DocumentRepository:
         )
         await self._session.flush()
 
-    async def search(self, embedding: list[float], limit: int) -> list[Source]:
-        """Les morceaux dont le sens est le plus proche de la question (documents prêts)."""
+    async def readable(
+        self, conversation_id: uuid.UUID, attachment_ids: list[uuid.UUID]
+    ) -> list[tuple[str, str]]:
+        """(nom affiché, texte) des fichiers utilisables, dans l'ordre où ils ont été joints."""
+        rows = await self._session.execute(
+            select(Document.path, Document.name, Document.content)
+            .where(_usable(conversation_id, attachment_ids), Document.content.is_not(None))
+            .order_by(Document.id)
+        )
+        return [(path or name, content) for path, name, content in rows]
+
+    async def search(
+        self,
+        embedding: list[float],
+        limit: int,
+        conversation_id: uuid.UUID,
+        attachment_ids: list[uuid.UUID],
+    ) -> list[Source]:
+        """Les morceaux dont le sens est le plus proche de la question, dans cette conversation."""
         ready_chunks = (
             select(
-                DocumentChunk.document_id, Document.name, DocumentChunk.page, DocumentChunk.content
+                DocumentChunk.document_id,
+                func.coalesce(Document.path, Document.name),
+                DocumentChunk.page,
+                DocumentChunk.content,
             )
             .join(Document, Document.id == DocumentChunk.document_id)
-            .where(Document.status == "ready")
+            .where(_usable(conversation_id, attachment_ids))
         )
         connection = await self._session.connection()
 
@@ -242,6 +313,20 @@ class DocumentRepository:
         scored = [(*row[:4], cosine_similarity(embedding, row[4])) for row in rows]
         scored.sort(key=lambda row: row[4], reverse=True)
         return [_source(*row) for row in scored[:limit]]
+
+
+def _usable(conversation_id: uuid.UUID, attachment_ids: list[uuid.UUID]):
+    """Les fichiers lus de la conversation, déjà envoyés ou partant avec ce message.
+
+    Un fichier qui attend encore dans la zone de saisie (d'un autre onglet, par exemple)
+    n'a pas été envoyé : le modèle ne doit pas le voir.
+    """
+    sent_or_sending = Document.message_id.is_not(None)
+    if attachment_ids:
+        sent_or_sending = or_(sent_or_sending, Document.id.in_(attachment_ids))
+    return and_(
+        Document.conversation_id == conversation_id, Document.status == "ready", sent_or_sending
+    )
 
 
 def _source(

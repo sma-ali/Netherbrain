@@ -8,11 +8,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from netherbrain.api import (
+    attachments,
     catalog,
     chat,
     comparisons,
     conversations,
-    documents,
     health,
     projects,
     workspace,
@@ -57,7 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations.router)
     app.include_router(comparisons.router)
     app.include_router(catalog.router)
-    app.include_router(documents.router)
+    app.include_router(attachments.router)
     app.include_router(projects.router)
     app.include_router(workspace.router)
     return app

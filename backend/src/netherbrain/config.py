@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     chunk_size: int = 1200
     chunk_overlap: int = 200
     max_upload_mb: int = 20
+    # Fichiers joints au chat : tant que leur texte tient dans ce nombre de caractères (au
+    # total), le modèle les reçoit en entier ; au-delà, seulement les passages utiles.
+    attachment_inline_chars: int = 32_000
 
     # --- Projets ---
     # Le dossier de travail : chaque projet est l'un de ses sous-dossiers, et l'application

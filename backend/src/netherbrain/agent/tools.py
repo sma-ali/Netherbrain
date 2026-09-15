@@ -54,6 +54,10 @@ def _schema(name: str, description: str, properties: dict, required: list[str]) 
 STRING = {"type": "string"}
 INTEGER = {"type": "integer"}
 
+# Un outil à part : il n'agit pas sur les fichiers, il pose une question à l'utilisateur,
+# qui répond en cliquant sur l'une des propositions (ou en écrivant sa propre réponse).
+ASK_USER = "ask_user"
+
 SCHEMAS = [
     _schema(
         "list_files",
@@ -99,6 +103,21 @@ SCHEMAS = [
         {"command": STRING},
         ["command"],
     ),
+    _schema(
+        ASK_USER,
+        "Ask the user a question when a decision is theirs to make, or when you need a "
+        "detail you cannot find in the project, then wait for the answer. Offer 2 to 4 "
+        "short options; the user may also type another answer.",
+        {
+            "question": STRING,
+            "options": {
+                "type": "array",
+                "items": STRING,
+                "description": "2 to 4 short answers to choose from.",
+            },
+        },
+        ["question", "options"],
+    ),
 ]
 
 
@@ -139,7 +158,9 @@ class Toolbox:
         if name == "run_command":
             detail = str(arguments.get("command", ""))
         else:
-            detail = str(arguments.get("path") or arguments.get("pattern") or "")
+            detail = str(
+                arguments.get("path") or arguments.get("pattern") or arguments.get("question") or ""
+            )
         if len(detail) > 120:
             detail = detail[:117] + "…"
         return f"{name}({detail})"

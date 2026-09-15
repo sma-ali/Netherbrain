@@ -204,19 +204,19 @@ def test_the_model_knows_the_project(client, workspace, use_providers):
     assert (user.role, user.content) == ("user", "Salut")
 
 
-def test_the_project_and_the_documents_share_one_system_message(
+def test_the_project_and_the_attachments_share_one_system_message(
     client, workspace, use_providers, use_embedder
 ):
     use_embedder(FakeEmbedder())
     provider = FakeProvider(events=[TokenEvent(content="ok")])
     use_providers(provider)
-    client.post(
-        "/api/documents",
-        files={"file": ("coffre.txt", b"Le code du coffre est licorne.", "text/plain")},
-    )
     conversation_id = new_conversation(client, new_project(client, workspace))
+    attachment = client.post(
+        f"/api/conversations/{conversation_id}/attachments",
+        files={"file": ("coffre.txt", b"Le code du coffre est licorne.", "text/plain")},
+    ).json()
 
-    send(client, conversation_id, "Quel est le code du coffre ?", use_documents=True)
+    send(client, conversation_id, "Quel est le code du coffre ?", attachment_ids=[attachment["id"]])
 
     assert [m.role for m in provider.received] == ["system", "user"]
     assert '"nb"' in provider.received[0].content

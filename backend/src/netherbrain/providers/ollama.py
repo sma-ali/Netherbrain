@@ -50,6 +50,11 @@ class OllamaProvider(OpenAICompatibleProvider):
             async with httpx.AsyncClient(timeout=10, transport=self._transport) as client:
                 response = await client.get(f"{self._native_url}/api/tags")
                 response.raise_for_status()
+        except httpx.ConnectError as exc:
+            # Le cas le plus courant : Ollama n'est tout simplement pas lancé.
+            raise ProviderError(
+                f"{self.name}: not running (cannot reach {self._native_url})"
+            ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"{self.name}: {str(exc) or type(exc).__name__}") from exc
         cards = [card_from_ollama(self.name, raw) for raw in response.json().get("models", [])]
@@ -94,6 +99,11 @@ class OllamaProvider(OpenAICompatibleProvider):
                         raise ProviderError(f"{self.name}: {error}")
                     for event in stream_events(chunk):
                         yield event
+        except httpx.ConnectError as exc:
+            # Le cas le plus courant : Ollama n'est tout simplement pas lancé.
+            raise ProviderError(
+                f"{self.name}: not running (cannot reach {self._native_url})"
+            ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"{self.name}: {str(exc) or type(exc).__name__}") from exc
 

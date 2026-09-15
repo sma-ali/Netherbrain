@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from netherbrain.agent.approvals import Reply
 from netherbrain.agent.tools import Toolbox
 from netherbrain.api.deps import (
     ApprovalsDep,
@@ -37,8 +38,7 @@ from netherbrain.db.repository import (
 )
 from netherbrain.projects.prompt import build_project_context
 from netherbrain.projects.workspace import Workspace
-from netherbrain.rag.prompt import build_context
-from netherbrain.rag.retrieval import find_sources
+from netherbrain.rag.context import attachment_context
 from netherbrain.schemas import (
     ApprovalRequest,
     ChatMessage,
@@ -72,6 +72,19 @@ async def project_of(
     project = await ProjectRepository(session).get(conversation.project_id)
     folder = workspace.find(project.path) if project else None
     return (project.name, folder) if project and folder else None
+
+
+async def check_attachments(
+    documents: DocumentRepository, conversation_id: uuid.UUID, attachment_ids: list[uuid.UUID]
+) -> None:
+    """Les fichiers annoncés doivent appartenir à la conversation, et avoir été lus."""
+    if not attachment_ids:
+        return
+    found = await documents.find(conversation_id, attachment_ids)
+    if len(found) != len(set(attachment_ids)):
+        raise HTTPException(status_code=404, detail="Attachment not found in this conversation")
+    if not_ready := [document.name for document in found if document.status != "ready"]:
+        raise HTTPException(status_code=409, detail=f"Not ready: {', '.join(not_ready)}")
 
 
 @router.get("")
@@ -127,14 +140,16 @@ async def send_message(
     """Enregistre le message de l'utilisateur, puis streame et enregistre la réponse du modèle.
 
     Le serveur reconstitue lui-même l'historique depuis la base : le client n'envoie que
-    le nouveau message. Dans un projet, le modèle reçoit une présentation du projet, et
-    avec `agent` il peut se servir des outils qui lisent et modifient son dossier. Avec
-    `use_documents`, les extraits de documents les plus proches de la question sont
-    ajoutés au prompt (RAG) et renvoyés comme sources.
+    le nouveau message, et les identifiants des fichiers qu'il y joint. Le modèle reçoit en
+    message système la présentation du projet (s'il y en a un) et les fichiers joints à la
+    conversation. Avec `agent`, il peut aussi se servir des outils qui lisent et modifient
+    le dossier du projet.
     """
     repository = ConversationRepository(session)
     conversation = await get_or_404(repository, conversation_id)
     provider = get_provider_or_404(registry, request.provider)
+    documents = DocumentRepository(session)
+    await check_attachments(documents, conversation_id, request.attachment_ids)
 
     history = [
         ChatMessage(role=m.role, content=m.content) for m in conversation.messages if m.content
@@ -151,15 +166,19 @@ async def send_message(
     system: list[str] = []
     if project is not None:
         system.append(build_project_context(*project, agent=request.agent))
-
-    sources: list[Source] = []
-    warning: str | None = None
-    if request.use_documents:
-        sources, warning = await find_sources(
-            request.content, embedder, DocumentRepository(session), settings.rag_top_k
-        )
-    if sources:
-        system.append(build_context(sources))
+    # Tous les fichiers joints à la conversation, pas seulement ceux de ce message :
+    # en entier s'ils sont courts, sinon les passages les plus proches de la question.
+    attachments = await attachment_context(
+        conversation_id,
+        request.content,
+        request.attachment_ids,
+        documents=documents,
+        embedder=embedder,
+        inline_limit=settings.attachment_inline_chars,
+        top_k=settings.rag_top_k,
+    )
+    if attachments.system:
+        system.append(attachments.system)
     if system:
         history.insert(0, ChatMessage(role="system", content="\n\n".join(system)))
 
@@ -175,17 +194,22 @@ async def send_message(
 
     if conversation.title is None:
         conversation.title = make_title(request.content)
-    await repository.add_message(conversation_id, role="user", content=request.content)
+    message = await repository.add_message(conversation_id, role="user", content=request.content)
+    if request.attachment_ids:
+        await documents.attach(conversation_id, request.attachment_ids, message.id)
     await session.commit()
 
     async def event_stream() -> AsyncIterator[str]:
         result = StreamResult()
         try:
-            if request.use_documents:
+            if attachments.sources or attachments.warning:
                 # Les sources partent en premier : l'interface les affiche avant la réponse.
                 yield sse(
                     "sources",
-                    {"sources": [s.model_dump(mode="json") for s in sources], "warning": warning},
+                    {
+                        "sources": [s.model_dump(mode="json") for s in attachments.sources],
+                        "warning": attachments.warning,
+                    },
                 )
             if toolbox is not None:
                 answer = stream_agent(
@@ -207,17 +231,20 @@ async def send_message(
             # fermé), on enregistre ce qui a déjà été généré. Le « shield » protège cette
             # écriture de l'annulation que déclenche la déconnexion.
             with anyio.CancelScope(shield=True):
-                await save_answer(session_factory, conversation_id, request, result, sources)
+                await save_answer(
+                    session_factory, conversation_id, request, result, attachments.sources
+                )
 
     return sse_response(event_stream())
 
 
 @router.post("/{conversation_id}/approvals/{call_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def answer_approval(
+async def answer_agent(
     conversation_id: uuid.UUID, call_id: str, request: ApprovalRequest, approvals: ApprovalsDep
 ) -> None:
-    """La réponse de l'utilisateur à une demande d'autorisation, attendue par le stream."""
-    if not approvals.answer(conversation_id, call_id, request.decision):
+    """La réponse de l'utilisateur à l'agent (autorisation ou question), attendue par le stream."""
+    reply = Reply(request.decision, request.answer)
+    if not approvals.answer(conversation_id, call_id, reply):
         raise HTTPException(status_code=404, detail="No pending approval for this call")
 
 

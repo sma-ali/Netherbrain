@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi.responses import StreamingResponse
 
-from netherbrain.agent.approvals import ApprovalRegistry
-from netherbrain.agent.tools import Toolbox, ToolResult
+from netherbrain.agent.approvals import ApprovalRegistry, Reply
+from netherbrain.agent.tools import ASK_USER, Toolbox, ToolResult
 from netherbrain.providers import LLMProvider, ProviderError
 from netherbrain.schemas import ChatMessage, TokenEvent, ToolCallEvent, UsageEvent
 
@@ -169,15 +169,37 @@ async def _run_call(
     result: StreamResult,
     history: list[ChatMessage],
 ) -> AsyncIterator[str]:
-    """Un appel d'outil : autorisation éventuelle, exécution, puis trace pour le modèle."""
+    """Un appel d'outil : autorisation ou question éventuelle, exécution, trace pour le modèle.
+
+    Quand il faut l'utilisateur, le stream s'arrête sur `approvals.wait` : sa réponse arrive
+    par une autre requête HTTP (un SSE ne va que du serveur vers le navigateur).
+    """
     arguments = _arguments(call.arguments)
     summary = toolbox.describe(call.name, arguments or {})
     yield sse("tool_call", {"id": call.id, "name": call.name, "summary": summary})
 
     if arguments is None:
         outcome, state = ToolResult("Arguments are not valid JSON.", error=True), "error"
+    elif call.name == ASK_USER:
+        options = [str(option) for option in arguments.get("options") or []][:4]
+        yield sse(
+            "tool_request",
+            {
+                "id": call.id,
+                "name": call.name,
+                "summary": summary,
+                "kind": "question",
+                "question": str(arguments.get("question", "")),
+                "options": options,
+            },
+        )
+        reply = await approvals.wait(conversation_id, call.id, call.name)
+        if reply is None or reply.decision != "answer":
+            outcome, state = ToolResult("The user did not answer.", error=True), "error"
+        else:
+            outcome, state = ToolResult(f"The user answered: {reply.answer}"), "done"
     else:
-        decision = "once"
+        reply = Reply("once")
         if toolbox.needs_approval(call.name) and not approvals.allowed(conversation_id, call.name):
             yield sse(
                 "tool_request",
@@ -185,13 +207,13 @@ async def _run_call(
                     "id": call.id,
                     "name": call.name,
                     "summary": summary,
+                    "kind": "approval",
                     "arguments": arguments,
                 },
             )
-            # Le stream s'arrête ici tant que l'utilisateur n'a pas répondu, par une
-            # autre requête HTTP (un SSE ne va que du serveur vers le navigateur).
-            decision = await approvals.ask(conversation_id, call.id, call.name)
-        if decision == "deny":
+            # Sans réponse à temps, c'est un refus.
+            reply = await approvals.wait(conversation_id, call.id, call.name) or Reply("deny")
+        if reply.decision not in ("once", "always"):
             outcome, state = ToolResult("The user refused this action.", error=True), "denied"
         else:
             outcome = await toolbox.run(call.name, arguments)

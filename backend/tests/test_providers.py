@@ -198,5 +198,5 @@ def test_an_unreachable_ollama_is_reported():
 
     provider = OllamaProvider("http://ollama.test:11434/v1", transport=httpx.MockTransport(refuse))
 
-    with pytest.raises(ProviderError, match="ollama"):
+    with pytest.raises(ProviderError, match="not running"):
         collect(provider.stream_chat("m", [ChatMessage(role="user", content="salut")]))

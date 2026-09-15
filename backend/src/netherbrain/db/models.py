@@ -93,6 +93,11 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages", lazy="raise")
+    # Les fichiers envoyés avec ce message. viewonly : ils existent avant le message et lui
+    # sont rattachés par une requête UPDATE, jamais en passant par cette relation.
+    attachments: Mapped[list[Document]] = relationship(
+        order_by="Document.id", lazy="raise", viewonly=True
+    )
 
 
 class Comparison(Base):
@@ -141,12 +146,30 @@ class ComparisonResult(Base):
 
 
 class Document(Base):
-    """Un document importé par l'utilisateur, découpé en morceaux pour le RAG."""
+    """Un fichier joint à une conversation : son texte, et ses morceaux pour la recherche."""
 
     __tablename__ = "documents"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(String(255))
+    # Chemin dans le dossier joint (« app/src/main.py ») ; None pour un fichier joint seul.
+    path: Mapped[str | None] = mapped_column(String(1024))
+    # La conversation du fichier : la supprimer supprime aussi ses fichiers.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_documents_conversation_id_conversations",
+        ),
+        index=True,
+    )
+    # Le message de l'utilisateur qui l'a envoyé ; None tant qu'il attend dans la zone de saisie.
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL", name="fk_documents_message_id_messages")
+    )
+    # Le texte extrait, envoyé en entier au modèle quand il est court. « deferred » : les
+    # listes de fichiers ne le chargent pas, car il peut être très long.
+    content: Mapped[str | None] = mapped_column(Text, deferred=True)
     content_type: Mapped[str] = mapped_column(String(100))
     size_bytes: Mapped[int]
     # processing (indexation en cours), ready, ou error.

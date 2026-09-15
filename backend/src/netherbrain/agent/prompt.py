@@ -8,5 +8,6 @@ INSTRUCTIONS = """You can explore and change this project with your tools. Rules
   write_file replaces a whole file.
 - write_file, edit_file and run_command ask the user for permission: a refusal is normal,
   acknowledge it and propose something else.
+- When a choice is the user's to make, ask with ask_user instead of guessing.
 - Call one tool at a time, then answer briefly, citing the paths you read or changed.
 - Never reveal secrets you happen to read, and never run a destructive command."""

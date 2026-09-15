@@ -99,6 +99,7 @@ def test_the_model_reads_a_file_then_answers(client, workspace, use_providers, a
         "write_file",
         "edit_file",
         "run_command",
+        "ask_user",
     ]
     assert provider.histories[1][-1].role == "tool"
     assert provider.histories[1][-2].tool_calls[0]["function"]["name"] == "read_file"
@@ -256,6 +257,46 @@ def test_models_say_which_ones_can_use_tools(client, use_providers):
     models = client.get("/api/models").json()["models"]
 
     assert {(m["provider"], m["tools"]) for m in models} == {("fake", True), ("other", False)}
+
+
+def test_the_agent_can_ask_the_user_a_question(client, workspace, use_providers, approvals):
+    provider = FakeProvider(
+        turns=[
+            [
+                tool_call(
+                    "ask_user", '{"question": "Quel framework ?", "options": ["FastAPI", "Flask"]}'
+                )
+            ],
+            [TokenEvent(content="Va pour FastAPI.")],
+        ]
+    )
+    use_providers(provider)
+    conversation_id, _ = make_project(client, workspace, {"app.py": "x = 1\n"})
+
+    with ThreadPoolExecutor(1) as pool:
+        streaming = pool.submit(ask, client, conversation_id)
+        call_id = wait_for_request(approvals, conversation_id)
+        reply = client.post(
+            f"/api/conversations/{conversation_id}/approvals/{call_id}",
+            json={"decision": "answer", "answer": "FastAPI"},
+        )
+        assert reply.status_code == 204
+        response = streaming.result(timeout=10)
+
+    request = event_of(response, "tool_request")
+    assert (request["kind"], request["question"], request["options"]) == (
+        "question",
+        "Quel framework ?",
+        ["FastAPI", "Flask"],
+    )
+    assert event_of(response, "tool_result")["status"] == "done"
+    assert provider.histories[1][-1].content == "The user answered: FastAPI"
+
+
+def test_an_answer_needs_some_text(client, workspace, approvals):
+    conversation_id = client.post("/api/conversations").json()["id"]
+
+    assert decide(client, conversation_id, "call_1", "answer").status_code == 422
 
 
 # --- Les outils, un par un ---

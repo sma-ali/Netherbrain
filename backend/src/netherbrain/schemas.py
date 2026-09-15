@@ -2,9 +2,9 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ChatMessage(BaseModel):
@@ -110,6 +110,26 @@ class Source(BaseModel):
     score: float
 
 
+class AttachmentInfo(BaseModel):
+    """Un fichier joint à une conversation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    # Chemin dans le dossier joint (« app/src/main.py ») ; None pour un fichier joint seul.
+    path: str | None = None
+    content_type: str
+    size_bytes: int
+    # processing : lecture en cours ; ready : utilisable ; error : voir `error`.
+    status: Literal["processing", "ready", "error"]
+    error: str | None = None
+    chunk_count: int
+    # Le message qui l'a envoyé ; None tant qu'il attend dans la zone de saisie.
+    message_id: uuid.UUID | None = None
+    created_at: datetime
+
+
 class AgentStep(BaseModel):
     """Un appel d'outil de l'agent, tel qu'on l'affiche et l'enregistre."""
 
@@ -123,10 +143,18 @@ class AgentStep(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    """La réponse de l'utilisateur à une demande d'autorisation de l'agent."""
+    """La réponse de l'utilisateur à l'agent : une autorisation, ou la réponse à sa question."""
 
-    # once : cette fois ; always : cet outil pour toute la conversation ; deny : refus.
-    decision: Literal["once", "always", "deny"]
+    # Pour une action : once (cette fois), always (cet outil, pour toute la conversation)
+    # ou deny. Pour une question de l'agent (ask_user) : answer, avec le texte choisi.
+    decision: Literal["once", "always", "deny", "answer"]
+    answer: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def an_answer_needs_text(self) -> Self:
+        if self.decision == "answer" and not (self.answer or "").strip():
+            raise ValueError("An answer needs some text")
+        return self
 
 
 class StoredMessage(BaseModel):
@@ -144,6 +172,8 @@ class StoredMessage(BaseModel):
     sources: list[Source] | None = None
     # Les outils utilisés par l'agent pour produire cette réponse.
     steps: list[AgentStep] | None = None
+    # Les fichiers joints à ce message (messages de l'utilisateur).
+    attachments: list[AttachmentInfo] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -155,8 +185,8 @@ class SendMessageRequest(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     content: str = Field(min_length=1)
-    # Chercher dans les documents importés et s'appuyer sur eux pour répondre (RAG).
-    use_documents: bool = False
+    # Les fichiers joints à ce message : déjà importés dans la conversation, et prêts.
+    attachment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
     # Mode agent : le modèle peut lire et modifier les fichiers du projet avec ses outils.
     agent: bool = False
 
@@ -199,23 +229,6 @@ class DirectoryListing(BaseModel):
     # Le dossier parent, ou None à la racine.
     parent: str | None
     directories: list[FolderInfo]
-
-
-# --- Documents (RAG) ---
-
-
-class DocumentInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    name: str
-    content_type: str
-    size_bytes: int
-    # processing : indexation en cours ; ready : utilisable ; error : voir `error`.
-    status: Literal["processing", "ready", "error"]
-    error: str | None = None
-    chunk_count: int
-    created_at: datetime
 
 
 # --- Comparaisons enregistrées ---

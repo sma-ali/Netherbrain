@@ -9,7 +9,12 @@ import pytest
 
 from netherbrain.rag.chunking import Chunk, chunk_pages, chunk_text
 from netherbrain.rag.embeddings import EmbeddingError, OllamaEmbedder, cosine_similarity
-from netherbrain.rag.extract import UnsupportedDocumentError, content_type_for, extract_pages
+from netherbrain.rag.extract import (
+    UnsupportedDocumentError,
+    content_type_for,
+    extract_pages,
+    pages_to_text,
+)
 
 
 def make_pdf(pages: list[str]) -> bytes:
@@ -105,17 +110,33 @@ def test_unreadable_or_empty_pdfs_are_refused(data):
 
 
 @pytest.mark.parametrize(
-    ("filename", "expected"),
-    [("rapport.PDF", "application/pdf"), ("notes.md", "text/markdown"), ("a.txt", "text/plain")],
+    ("filename", "data", "expected"),
+    [
+        ("rapport.PDF", b"%PDF-1.4", "application/pdf"),
+        ("notes.md", b"# Titre", "text/markdown"),
+        ("Dockerfile", b"FROM python:3.14", "text/plain"),
+        ("App.tsx", "const titre = 'Été'".encode(), "text/plain"),
+    ],
 )
-def test_the_type_comes_from_the_extension(filename, expected):
-    assert content_type_for(filename) == expected
+def test_pdfs_and_any_text_file_are_accepted(filename, data, expected):
+    assert content_type_for(filename, data) == expected
 
 
-@pytest.mark.parametrize("filename", ["photo.png", "sans-extension"])
-def test_other_types_are_refused(filename):
+@pytest.mark.parametrize(
+    ("filename", "data"),
+    [
+        ("photo.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"),
+        ("ancien.txt", "Été".encode("latin-1")),
+    ],
+)
+def test_binary_or_non_utf8_files_are_refused(filename, data):
     with pytest.raises(UnsupportedDocumentError):
-        content_type_for(filename)
+        content_type_for(filename, data)
+
+
+def test_pages_are_marked_so_the_model_can_cite_them():
+    assert pages_to_text([(1, "Un. "), (3, "Trois.")]) == "[page 1]\nUn.\n\n[page 3]\nTrois."
+    assert pages_to_text([(None, "  texte  ")]) == "texte"
 
 
 # --- Embeddings ---
