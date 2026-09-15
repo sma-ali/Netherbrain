@@ -4,25 +4,29 @@ import { BookOpen, BrainCircuit, ChevronRight, TriangleAlert } from "lucide-reac
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+import { AttachmentChips } from "@/components/attachment-chips"
 import { Metrics } from "@/components/metrics"
-import { ToolStep } from "@/components/tool-step"
+import { ToolStep, type ApproveHandler } from "@/components/tool-step"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import type { UIMessage } from "@/hooks/use-chat"
-import type { Source, ToolDecision } from "@/lib/api"
+import type { Source } from "@/lib/api"
 
 interface MessageProps {
   message: UIMessage
   streaming: boolean
   /** Afficher le modèle au-dessus de la réponse (inutile quand une colonne le montre déjà). */
   showModel?: boolean
-  /** Réponse à une demande d'autorisation de l'agent. */
-  onApprove?: (callId: string, decision: ToolDecision) => void
+  /** Réponse à l'agent : autorisation, ou réponse à sa question. */
+  onApprove?: ApproveHandler
 }
 
 export function Message({ message, streaming, showModel = true, onApprove }: MessageProps) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-2">
+        {message.attachments && message.attachments.length > 0 && (
+          <AttachmentChips items={message.attachments} className="max-w-[85%] justify-end" />
+        )}
         <div className="max-w-[85%] rounded-2xl bg-secondary px-4 py-2.5 whitespace-pre-wrap">
           {message.content}
         </div>

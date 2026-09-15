@@ -8,6 +8,7 @@ import {
   FileText,
   FolderTree,
   Loader2,
+  MessageSquare,
   Search,
   ShieldAlert,
   SquareTerminal,
@@ -15,9 +16,11 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Input } from "@/components/ui/input"
 import type { AgentStep, ToolDecision } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -28,14 +31,17 @@ const ICONS: Record<string, LucideIcon> = {
   write_file: FilePen,
   edit_file: FilePen,
   run_command: SquareTerminal,
+  ask_user: MessageSquare,
 }
+
+export type ApproveHandler = (callId: string, decision: ToolDecision, answer?: string) => void
 
 interface ToolStepProps {
   step: AgentStep
-  onApprove?: (callId: string, decision: ToolDecision) => void
+  onApprove?: ApproveHandler
 }
 
-/** Un appel d'outil de l'agent : ce qu'il fait, son résultat, et la demande d'autorisation. */
+/** Un appel d'outil de l'agent : ce qu'il fait, son résultat, ou ce qu'il attend de vous. */
 export function ToolStep({ step, onApprove }: ToolStepProps) {
   const Icon = ICONS[step.name] ?? Wrench
   const asking = step.status === "asking"
@@ -45,10 +51,12 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
       <div className="flex items-center gap-2">
         <Icon className="size-4 shrink-0 text-muted-foreground" />
         <span className="truncate font-mono text-xs">{step.summary}</span>
-        <Status status={step.status} />
+        <Status step={step} />
       </div>
 
-      {asking ? (
+      {asking && step.kind === "question" ? (
+        <Question step={step} onAnswer={(answer) => onApprove?.(step.id, "answer", answer)} />
+      ) : asking ? (
         <>
           <Preview step={step} />
           <div className="mt-2 flex flex-wrap gap-2">
@@ -70,21 +78,62 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
   )
 }
 
-function Status({ status }: { status: AgentStep["status"] }) {
+function Status({ step }: { step: AgentStep }) {
+  if (step.status === "asking") {
+    const question = step.kind === "question"
+    return (
+      <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-primary">
+        {question ? <MessageSquare className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
+        {question ? "Waiting for your answer" : "Needs your permission"}
+      </span>
+    )
+  }
+
   const badge = {
     running: <Loader2 className="size-3.5 animate-spin" />,
-    asking: (
-      <span className="flex items-center gap-1 text-primary">
-        <ShieldAlert className="size-3.5" />
-        Needs your permission
-      </span>
-    ),
     done: <Check className="size-3.5 text-muted-foreground" />,
     error: <TriangleAlert className="size-3.5 text-destructive" />,
     denied: <CircleSlash className="size-3.5 text-muted-foreground" />,
-  }[status]
+  }[step.status]
 
   return <span className="ml-auto shrink-0 text-xs text-muted-foreground">{badge}</span>
+}
+
+/** La question de l'agent : une réponse d'un clic, ou la vôtre, tapée à la main. */
+function Question({ step, onAnswer }: { step: AgentStep; onAnswer: (answer: string) => void }) {
+  const [other, setOther] = useState("")
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      <p className="text-sm font-medium">{step.question}</p>
+      {step.options && step.options.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {step.options.map((option) => (
+            <Button key={option} size="sm" variant="outline" onClick={() => onAnswer(option)}>
+              {option}
+            </Button>
+          ))}
+        </div>
+      )}
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (other.trim()) onAnswer(other.trim())
+        }}
+      >
+        <Input
+          value={other}
+          onChange={(event) => setOther(event.target.value)}
+          placeholder="Or type your own answer…"
+          aria-label="Your answer"
+        />
+        <Button type="submit" size="sm" disabled={!other.trim()}>
+          Answer
+        </Button>
+      </form>
+    </div>
+  )
 }
 
 /** Ce que l'agent s'apprête à faire : à lire avant d'autoriser. */

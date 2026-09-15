@@ -1,40 +1,33 @@
 "use client"
 
-import {
-  BookOpen,
-  BrainCircuit,
-  Folder,
-  GitBranch,
-  RotateCw,
-  SquarePen,
-  Wrench,
-} from "lucide-react"
+import { BrainCircuit, Folder, GitBranch, RotateCw, SquarePen, Upload, Wrench } from "lucide-react"
 import { useSearchParams } from "next/navigation"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type DragEvent } from "react"
 
 import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AppNav } from "@/components/app-nav"
+import { AttachmentChips } from "@/components/attachment-chips"
 import { Composer } from "@/components/composer"
 import { ConversationTree } from "@/components/conversation-tree"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
 import { Sidebar } from "@/components/sidebar"
 import { Button } from "@/components/ui/button"
+import { useAttachments } from "@/hooks/use-attachments"
 import { useChat } from "@/hooks/use-chat"
 import { useModels } from "@/hooks/use-models"
 import { useSavedList } from "@/hooks/use-saved-list"
 import {
   deleteConversation,
-  deleteDocument,
   deleteProject,
   listConversations,
-  listDocuments,
   listProjects,
   modelKey,
   type ConversationSummary,
   type Project,
   type ProviderStatus,
 } from "@/lib/api"
+import { filesFromDrop, type PickedFile } from "@/lib/attachments"
 import { cn } from "@/lib/utils"
 
 export function Chat() {
@@ -42,10 +35,11 @@ export function Chat() {
   const conversations = useSavedList(listConversations, deleteConversation)
   // On enregistre tant que l'historique répond. S'il est indisponible, le chat continue
   // de fonctionner sans rien enregistrer (dégradation gracieuse).
-  const { conversationId, messages, status, send, stop, open, reset, approve } = useChat({
-    persist: conversations.status !== "error",
-    onSaved: conversations.refresh,
-  })
+  const { conversationId, messages, status, send, stop, open, reset, approve, ensureConversation } =
+    useChat({
+      persist: conversations.status !== "error",
+      onSaved: conversations.refresh,
+    })
 
   const projects = useSavedList(listProjects, deleteProject)
   // Le projet de la conversation affichée, ou celui d'une nouvelle conversation.
@@ -53,15 +47,15 @@ export function Chat() {
   const project = projects.items.find((p) => p.id === projectId) ?? null
   const [addingProject, setAddingProject] = useState(false)
 
-  // Mode agent : il faut un projet dont le dossier existe, et un modèle qui sait appeler
-  // des outils. Sans l'historique côté serveur, il n'y a même pas de conversation.
-  const [agent, setAgent] = useState(false)
+  // Mode agent : actif par défaut, comme dans Claude Code, dès qu'il est possible (un projet
+  // dont le dossier existe, et un modèle qui sait appeler des outils).
+  const [agent, setAgent] = useState(true)
 
-  const documents = useSavedList(listDocuments, deleteDocument)
-  const readyDocuments = documents.items.filter((d) => d.status === "ready").length
-  const [useDocuments, setUseDocuments] = useState(false)
-  // Le RAG n'a de sens qu'avec l'historique (côté serveur) et au moins un document prêt.
-  const canUseDocuments = conversations.status !== "error" && readyDocuments > 0
+  // Les fichiers joints partent avec le prochain message. Ils vivent côté serveur : sans
+  // l'historique, on ne peut pas en joindre.
+  const attachments = useAttachments()
+  const canAttach = conversations.status !== "error"
+  const [dragging, setDragging] = useState(false)
 
   const searchParams = useSearchParams()
   // Le catalogue peut présélectionner un modèle via l'URL : /?model=ollama/qwen3:8b
@@ -86,19 +80,47 @@ export function Chat() {
 
   const openConversation = (conversation: ConversationSummary) => {
     setProjectId(conversation.project_id)
+    attachments.clear()
     open(conversation.id)
   }
 
   const newChat = (inProject: string | null) => {
     setProjectId(inProject)
+    attachments.clear()
     reset()
+  }
+
+  const attach = (picked: PickedFile[]) => {
+    if (canAttach) void attachments.add(picked, () => ensureConversation(projectId))
+  }
+
+  // Glisser-déposer : des fichiers ou des dossiers entiers, n'importe où sur la conversation.
+  const carriesFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files")
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!canAttach || !carriesFiles(event)) return
+    event.preventDefault()
+    setDragging(true)
+  }
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    // dragleave se déclenche aussi en passant sur un élément enfant : on n'efface la zone
+    // de dépôt qu'en quittant vraiment la conversation.
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false)
+  }
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!canAttach || !carriesFiles(event)) return
+    event.preventDefault()
+    setDragging(false)
+    void filesFromDrop(event.dataTransfer).then(attach)
   }
 
   const handleDelete = async (id: string) => {
     if (!window.confirm("Delete this conversation?")) return
     try {
       await conversations.remove(id)
-      if (id === conversationId) reset()
+      if (id === conversationId) newChat(projectId)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error))
     }
@@ -129,13 +151,20 @@ export function Chat() {
     project !== null &&
     project.available &&
     model?.tools === true
-  const agentHint = !project
-    ? "Start a chat inside a project first"
-    : !project.available
-      ? "The project's folder is missing"
-      : model?.tools !== true
-        ? `${model?.id ?? "This model"} cannot use tools`
+  const agentOn = agent && canUseAgent
+  const agentHint = !project?.available
+    ? "The project's folder is missing"
+    : model?.tools !== true
+      ? `${model?.id ?? "This model"} cannot use tools: pick another model`
+      : agentOn
+        ? "The model can read, search and change the project's files, asking you first"
         : "Let the model read, search and change the project's files"
+
+  const handleSend = (text: string) => {
+    if (!model) return
+    void send(text, model, { projectId, agent: agentOn, attachments: attachments.ready })
+    attachments.clear()
+  }
 
   return (
     <div className="flex h-dvh">
@@ -159,7 +188,22 @@ export function Chat() {
         onCreated={handleProjectCreated}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className="relative flex min-w-0 flex-1 flex-col"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-3 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary bg-background/85 text-center backdrop-blur-sm">
+            <Upload className="size-8 text-primary" />
+            <p className="font-medium">Drop files or folders to attach them</p>
+            <p className="text-xs text-muted-foreground">
+              PDFs and any text file: code, Markdown, CSV…
+            </p>
+          </div>
+        )}
+
         <header className="flex items-center gap-3 border-b px-4 py-2.5">
           <AppNav compact className="md:hidden" />
           {project && <ProjectBadge project={project} />}
@@ -194,6 +238,7 @@ export function Chat() {
                 unavailable={models.providers.filter((p) => !p.available)}
                 onRetry={models.retry}
                 project={project}
+                agent={agentOn}
               />
             ) : (
               messages.map((message, index) => (
@@ -209,59 +254,39 @@ export function Chat() {
         </main>
 
         <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
-          <div className="mb-2 flex gap-2">
-            <button
-              type="button"
-              aria-pressed={agent && canUseAgent}
-              disabled={!canUseAgent}
-              onClick={() => setAgent((value) => !value)}
-              title={agentHint}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
-                agent &&
-                  canUseAgent &&
-                  "border-primary bg-primary/15 text-primary hover:bg-primary/20",
-              )}
-            >
-              <Wrench className="size-3.5" />
-              Agent
-            </button>
-            <button
-              type="button"
-              aria-pressed={useDocuments && canUseDocuments}
-              disabled={!canUseDocuments}
-              onClick={() => setUseDocuments((value) => !value)}
-              title={
-                canUseDocuments
-                  ? "Answer from your documents, with citations"
-                  : "Import documents first, on the Documents page"
-              }
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
-                useDocuments &&
-                  canUseDocuments &&
-                  "border-primary bg-primary/15 text-primary hover:bg-primary/20",
-              )}
-            >
-              <BookOpen className="size-3.5" />
-              Use my documents{readyDocuments > 0 && ` (${readyDocuments})`}
-            </button>
-          </div>
           <Composer
-            onSend={(text) =>
-              model &&
-              send(text, model, {
-                useDocuments: useDocuments && canUseDocuments,
-                projectId,
-                agent: agent && canUseAgent,
-              })
-            }
+            onSend={handleSend}
             onStop={stop}
             streaming={streaming}
             disabled={!model}
+            busy={attachments.busy}
+            onAttach={canAttach ? attach : undefined}
+            attachments={
+              attachments.items.length > 0 ? (
+                <AttachmentChips items={attachments.items} onRemove={attachments.remove} />
+              ) : undefined
+            }
+            toolbar={
+              project && (
+                <button
+                  type="button"
+                  aria-pressed={agentOn}
+                  disabled={!canUseAgent}
+                  onClick={() => setAgent((value) => !value)}
+                  title={agentHint}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                    agentOn && "border-primary bg-primary/15 text-primary hover:bg-primary/20",
+                  )}
+                >
+                  <Wrench className="size-3.5" />
+                  Agent
+                </button>
+              )
+            }
             placeholder={
-              agent && canUseAgent
-                ? `Ask the agent to change ${project?.name}…`
+              agentOn
+                ? `Ask the agent to work on ${project?.name}…`
                 : project && model
                   ? `Ask about ${project.name}…`
                   : undefined
@@ -307,15 +332,26 @@ interface EmptyStateProps {
   unavailable: ProviderStatus[]
   onRetry: () => void
   project: Project | null
+  agent: boolean
 }
 
-function EmptyState({ error, ready, hasModels, unavailable, onRetry, project }: EmptyStateProps) {
+function EmptyState({
+  error,
+  ready,
+  hasModels,
+  unavailable,
+  onRetry,
+  project,
+  agent,
+}: EmptyStateProps) {
   const retry = (
     <Button variant="outline" size="sm" onClick={onRetry}>
       <RotateCw />
       Retry
     </Button>
   )
+  // Ollama (le fournisseur local) arrêté : le cas le plus fréquent, avec la commande pour le relancer.
+  const localDown = unavailable.some((provider) => provider.local)
 
   return (
     <div className="flex flex-col items-center gap-3 pt-[18vh] text-center">
@@ -329,25 +365,35 @@ function EmptyState({ error, ready, hasModels, unavailable, onRetry, project }: 
           {retry}
         </div>
       ) : ready && !hasModels ? (
-        <div className="flex flex-col items-center gap-2 text-sm">
-          <p className="text-destructive">No model available. Is Ollama running?</p>
-          {retry}
-        </div>
+        <p className="text-sm text-destructive">No model available.</p>
       ) : project ? (
         <p className="max-w-md text-sm text-muted-foreground">
-          New chat in this project. The model sees its list of files
-          {project.instructions_file && ` and follows its ${project.instructions_file}`}.
+          {agent
+            ? "The agent can read, search and change this project's files. It asks before writing anything or running a command."
+            : "New chat in this project. The model sees its list of files."}
+          {project.instructions_file && ` It follows ${project.instructions_file}.`}
         </p>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Pick a model and ask anything. Local models run on your own GPU.
+          Pick a model and ask anything. Drop files or folders to talk about them.
         </p>
       )}
       {!error && unavailable.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          Unavailable right now: {unavailable.map((p) => p.name).join(", ")}.
-          {hasModels && " The other models still work."}
-        </p>
+        <div className="flex max-w-md flex-col items-center gap-2 text-xs text-muted-foreground">
+          <p>
+            Unavailable right now: {unavailable.map((p) => p.name).join(", ")}.
+            {hasModels && " The other models still work."}
+          </p>
+          {localDown && (
+            <p>
+              Local models need Ollama running. On Linux or WSL:{" "}
+              <code className="rounded bg-muted px-1 py-0.5 font-mono">
+                sudo systemctl start ollama
+              </code>
+            </p>
+          )}
+          {retry}
+        </div>
       )}
     </div>
   )

@@ -1,6 +1,6 @@
 "use client"
 
-import { FileText, LayoutGrid, MessageSquare, Swords } from "lucide-react"
+import { LayoutGrid, MessageSquare, Swords } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -11,7 +11,6 @@ const LINKS = [
   { href: "/", label: "Chat", icon: MessageSquare },
   { href: "/compare", label: "Compare", icon: Swords },
   { href: "/models", label: "Models", icon: LayoutGrid },
-  { href: "/documents", label: "Documents", icon: FileText },
 ]
 
 /**
@@ -22,7 +21,10 @@ export function AppNav({ compact = false, className }: { compact?: boolean; clas
   const pathname = usePathname()
 
   return (
-    <nav aria-label="Main" className={cn("flex", compact ? "gap-1" : "flex-col gap-0.5", className)}>
+    <nav
+      aria-label="Main"
+      className={cn("flex", compact ? "gap-1" : "flex-col gap-0.5", className)}
+    >
       {LINKS.map(({ href, label, icon: Icon }) => {
         const active = pathname === href
         return (

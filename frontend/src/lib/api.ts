@@ -58,9 +58,14 @@ export interface AgentStep {
   output: string
   // Les arguments de l'appel, envoyés quand il faut l'accord de l'utilisateur.
   arguments?: Record<string, unknown>
+  // approval : l'agent demande une autorisation ; question : il pose une question (ask_user).
+  kind?: "approval" | "question"
+  question?: string
+  options?: string[]
 }
 
-export type ToolDecision = "once" | "always" | "deny"
+// once, always, deny : pour une action ; answer : pour répondre à une question de l'agent.
+export type ToolDecision = "once" | "always" | "deny" | "answer"
 
 export type ChatEvent =
   | { type: "sources"; sources: Source[]; warning: string | null }
@@ -72,7 +77,10 @@ export type ChatEvent =
       id: string
       name: string
       summary: string
-      arguments: Record<string, unknown>
+      kind: "approval" | "question"
+      arguments?: Record<string, unknown>
+      question?: string
+      options?: string[]
     }
   | {
       type: "tool_result"
@@ -140,6 +148,8 @@ export interface StoredMessage {
   sources: Source[] | null
   // Les outils utilisés par l'agent pour produire cette réponse.
   steps: AgentStep[] | null
+  // Les fichiers joints à ce message (messages de l'utilisateur).
+  attachments: AttachmentInfo[]
   created_at: string
 }
 
@@ -177,17 +187,22 @@ export interface ComparisonDetail {
   results: ComparisonResultData[]
 }
 
-// --- Documents (RAG) ---
+// --- Fichiers joints ---
 
-export interface DocumentInfo {
+/** Un fichier joint à une conversation. */
+export interface AttachmentInfo {
   id: string
   name: string
+  // Chemin dans le dossier joint (« app/src/main.py ») ; null pour un fichier joint seul.
+  path: string | null
   content_type: string
   size_bytes: number
-  // processing : indexation en cours ; ready : utilisable ; error : voir `error`.
+  // processing : lecture en cours ; ready : utilisable ; error : voir `error`.
   status: "processing" | "ready" | "error"
   error: string | null
   chunk_count: number
+  // Le message qui l'a envoyé ; null tant qu'il attend dans la zone de saisie.
+  message_id: string | null
   created_at: string
 }
 
@@ -264,14 +279,15 @@ export async function deleteConversation(id: string): Promise<void> {
 
 /**
  * Envoie un message dans une conversation enregistrée : le serveur connaît déjà l'historique.
- * `useDocuments` : le serveur cherche dans les documents importés et s'en sert (RAG).
+ * `attachmentIds` : les fichiers joints au message, déjà envoyés et lus par le serveur.
+ * `agent` : le modèle peut lire et modifier les fichiers du projet.
  */
 export async function* streamMessage(
   conversationId: string,
   model: ModelInfo,
   content: string,
   signal: AbortSignal,
-  { useDocuments = false, agent = false }: { useDocuments?: boolean; agent?: boolean } = {},
+  { attachmentIds = [], agent = false }: { attachmentIds?: string[]; agent?: boolean } = {},
 ): AsyncGenerator<ChatEvent> {
   const response = await request(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -280,7 +296,7 @@ export async function* streamMessage(
       provider: model.provider,
       model: model.id,
       content,
-      use_documents: useDocuments,
+      attachment_ids: attachmentIds,
       agent,
     }),
     signal,
@@ -288,16 +304,17 @@ export async function* streamMessage(
   yield* readEvents(response)
 }
 
-/** Répond à une demande d'autorisation de l'agent ; le stream en cours l'attend. */
+/** Répond à l'agent : autoriser ou refuser une action, ou répondre à sa question. */
 export async function approveTool(
   conversationId: string,
   callId: string,
   decision: ToolDecision,
+  answer?: string,
 ): Promise<void> {
   await request(`/api/conversations/${conversationId}/approvals/${callId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({ decision, answer: answer ?? null }),
   })
 }
 
@@ -348,25 +365,36 @@ export async function* streamComparisonResult(
   yield* readEvents(response)
 }
 
-// --- Documents ---
+// --- Fichiers joints ---
 
-export async function listDocuments(signal?: AbortSignal): Promise<DocumentInfo[]> {
-  const response = await request("/api/documents", { signal })
+export async function listAttachments(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<AttachmentInfo[]> {
+  const response = await request(`/api/conversations/${conversationId}/attachments`, { signal })
   return response.json()
 }
 
-/** Envoie un fichier ; le serveur répond tout de suite et l'indexe en tâche de fond. */
-export async function uploadDocument(file: File): Promise<DocumentInfo> {
+/** Joint un fichier ; le serveur répond tout de suite et le lit en tâche de fond. */
+export async function uploadAttachment(
+  conversationId: string,
+  file: File,
+  path?: string,
+): Promise<AttachmentInfo> {
   const body = new FormData()
   body.append("file", file)
+  if (path) body.append("path", path)
   // Pas d'en-tête Content-Type : le navigateur l'écrit lui-même, avec la « boundary »
   // qui sépare les parties du formulaire.
-  const response = await request("/api/documents", { method: "POST", body })
+  const response = await request(`/api/conversations/${conversationId}/attachments`, {
+    method: "POST",
+    body,
+  })
   return response.json()
 }
 
-export async function deleteDocument(id: string): Promise<void> {
-  await request(`/api/documents/${id}`, { method: "DELETE" })
+export async function deleteAttachment(conversationId: string, id: string): Promise<void> {
+  await request(`/api/conversations/${conversationId}/attachments/${id}`, { method: "DELETE" })
 }
 
 // --- Projets ---
