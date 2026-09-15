@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **agent de code, le modèle lit et modifie le projet**.
+Développement en cours. Jalon actuel : **fichiers joints dans le chat, agent interactif**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -22,16 +22,17 @@ Développement en cours. Jalon actuel : **agent de code, le modèle lit et modif
 - [ ] Authentification
 - [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques et historique
 - [x] Catalogue des modèles : filtres, tris et mesures réelles faites sur votre installation
-- [x] RAG : discuter avec vos documents (PDF, texte, Markdown), réponses citant leurs sources
+- [x] Fichiers et dossiers joints directement dans le chat (glisser-déposer, coller), fouillés par RAG quand ils sont longs
 - [x] Projets, façon Claude Code : un dossier de code par projet, avec ses conversations et ses consignes (AGENTS.md)
 - [x] Agent de code : le modèle lit, cherche et modifie les fichiers du projet, chaque action sensible demandant votre accord
+- [x] Questions de l'agent, avec des réponses en un clic (outil `ask_user`)
 
 ## Architecture
 
 ```
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
-                                        ├──SQLAlchemy──> PostgreSQL + pgvector (historique, documents)
+                                        ├──SQLAlchemy──> PostgreSQL + pgvector (historique, fichiers joints)
                                         └──outils de l'agent──> dossier de travail (~/Projects)
 ```
 
@@ -58,6 +59,10 @@ docker compose up --build
 ```
 
 Puis ouvrir <http://localhost:3000>.
+
+Si l'interface indique « ollama unavailable », Ollama n'est pas lancé sur la machine hôte :
+`sudo systemctl start ollama`, ou `sudo systemctl enable --now ollama` pour qu'il démarre avec
+la machine (le désactiver libère le GPU pour d'autres usages, comme les jeux).
 
 Les conversations sont stockées dans PostgreSQL, sur le volume `pgdata` : elles survivent aux
 redémarrages, mais `docker compose down -v` les efface. Les migrations s'appliquent
@@ -165,11 +170,16 @@ NETHERBRAIN_WORKSPACE=~/code docker compose up --build
 
 ## Agent de code
 
-Dans une conversation de projet, le bouton **Agent** donne au modèle six outils sur le dossier
-du projet : `list_files`, `read_file` et `search_files` (lecture, exécutés directement), puis
-`write_file`, `edit_file` et `run_command` (modification, **soumis à votre accord**). Chaque
-appel s'affiche dans la réponse avec son résultat repliable ; une action sensible attend un
-clic : « Allow once », « Always allow » (pour toute la conversation) ou « Deny ».
+Dans une conversation de projet, le mode **Agent** (actif par défaut, comme dans Claude Code)
+donne au modèle des outils sur le dossier du projet : `list_files`, `read_file` et
+`search_files` (lecture, exécutés directement), puis `write_file`, `edit_file` et `run_command`
+(modification, **soumis à votre accord**). Chaque appel s'affiche dans la réponse avec son
+résultat repliable ; une action sensible attend un clic : « Allow once », « Always allow »
+(pour toute la conversation) ou « Deny ».
+
+Un septième outil, `ask_user`, permet au modèle de **vous poser une question** quand une
+décision vous revient : ses propositions s'affichent en boutons, et vous pouvez aussi taper
+votre propre réponse.
 
 ```
 Question → le modèle demande un outil → autorisation si nécessaire → exécution dans le dossier
@@ -202,22 +212,29 @@ l'agent lit un fichier : la conversation serait tronquée en silence. Netherbrai
 avec Ollama par son **API native** (`/api/chat`), la seule qui accepte l'option `num_ctx`, et
 demande 16384 tokens (`NETHERBRAIN_OLLAMA_CONTEXT_LENGTH`, au prix d'un peu de VRAM).
 
-## Discuter avec ses documents (RAG)
+## Joindre des fichiers au chat
 
-Importez des PDF, fichiers texte ou Markdown sur la page `/documents`, puis activez
-« Use my documents » dans le chat : le modèle répond à partir des passages les plus
-pertinents et les cite ([1], [2]…), sources consultables sous la réponse.
+Comme dans Claude, on joint des fichiers **directement dans la conversation** : bouton « + »
+(fichiers ou dossier entier), glisser-déposer n'importe où sur la conversation, ou coller.
+PDF et tout fichier texte sont acceptés, code compris (`.py`, `.tsx`, `Dockerfile`, CSV…).
+Dans un dossier, les fichiers cachés (`.env`, `.git`…) et les dépendances (`node_modules`…)
+sont ignorés.
+
+Chaque fichier est lu en tâche de fond (le message part une fois tous les fichiers lus), puis
+reste disponible pour toute la suite de la conversation :
 
 ```
-Import :   fichier → texte (page par page) → morceaux de ~1 200 caractères qui se chevauchent
-           → un vecteur par morceau (nomic-embed-text, via Ollama) → PostgreSQL + pgvector
-Question : vecteur de la question → 5 morceaux les plus proches (distance cosinus, index HNSW)
-           → ajoutés au prompt en message système → réponse sourcée
+Fichiers courts (32 000 caractères au total) → envoyés en entier au modèle, balisés par nom
+Fichiers longs → RAG : morceaux de ~1 200 caractères, vecteurs (nomic-embed-text), pgvector
+                 → seuls les 5 passages les plus proches de la question partent, cités [1], [2]…
 ```
 
-Prérequis : le modèle d'embeddings, à installer une fois avec `ollama pull nomic-embed-text`.
-L'indexation se fait en tâche de fond ; si le modèle d'embeddings est indisponible au moment
-d'une question, la réponse arrive quand même, sans les documents, avec un avertissement.
+Le contenu des fichiers est présenté au modèle comme une **donnée, jamais une consigne** : un
+fichier piégé (« ignore tes instructions… ») ne doit pas pouvoir le détourner.
+
+Prérequis pour les fichiers longs : le modèle d'embeddings, à installer une fois avec
+`ollama pull nomic-embed-text`. Sans lui, les fichiers courts fonctionnent quand même ; pour les
+longs, seul leur début est envoyé, avec un avertissement.
 
 ## Comparer des modèles
 
@@ -254,17 +271,17 @@ propres champs à la liste standard au format OpenAI.
 | POST    | `/api/conversations` | Crée une conversation (`{project_id}` facultatif)      |
 | GET     | `/api/conversations/{id}` | Une conversation et ses messages                  |
 | DELETE  | `/api/conversations/{id}` | Supprime une conversation et ses messages         |
-| POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse (`use_documents`, `agent`) |
-| POST    | `/api/conversations/{id}/approvals/{call_id}` | Autorise ou refuse une action de l'agent |
+| POST    | `/api/conversations/{id}/messages` | Envoie un message, streame et enregistre la réponse (`attachment_ids`, `agent`) |
+| POST    | `/api/conversations/{id}/approvals/{call_id}` | Répond à l'agent : autorisation, ou réponse à sa question |
+| GET     | `/api/conversations/{id}/attachments` | Fichiers joints à la conversation et leur état de lecture |
+| POST    | `/api/conversations/{id}/attachments` | Joint un fichier (202 : lecture en tâche de fond)     |
+| DELETE  | `/api/conversations/{id}/attachments/{attachment_id}` | Retire un fichier joint      |
 | GET     | `/api/projects` | Projets, par ordre alphabétique (dossier, branche Git, consignes) |
 | POST    | `/api/projects` | Crée un projet à partir d'un dossier (`{path, name}`)   |
 | GET     | `/api/projects/{id}` | Un projet                                          |
 | DELETE  | `/api/projects/{id}` | Oublie un projet (ses conversations et son dossier restent) |
 | GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier de travail, pour choisir un projet |
 | GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
-| GET     | `/api/documents` | Documents importés et leur statut d'indexation           |
-| POST    | `/api/documents` | Importe un fichier (202 : indexation en tâche de fond)   |
-| DELETE  | `/api/documents/{id}` | Supprime un document et ses morceaux                |
 | GET     | `/api/comparisons` | Comparaisons, de la plus récente à la plus ancienne     |
 | POST    | `/api/comparisons` | Crée une comparaison (2 à 4 modèles)                    |
 | GET     | `/api/comparisons/{id}` | Une comparaison et les réponses de chaque modèle   |
