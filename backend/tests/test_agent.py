@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 from conftest import FakeProvider, parse_sse
 
+from netherbrain.agent import diff as diff_module
 from netherbrain.agent.approvals import ApprovalRegistry
+from netherbrain.agent.diff import make_diff
 from netherbrain.agent.tools import Toolbox
 from netherbrain.config import Settings, get_settings
 from netherbrain.main import app
@@ -199,6 +201,31 @@ def test_writing_a_file_waits_for_the_user(client, workspace, use_providers, app
 
     assert names(response) == ["tool_call", "tool_request", "tool_result", "token", "done"]
     assert (folder / "notes.md").read_text() == "salut"
+    # La demande montrait le fichier à créer, avant qu'il existe.
+    diff = event_of(response, "tool_request")["diff"]
+    assert (diff["created"], diff["lines"]) == (True, ["@@ -0,0 +1 @@", "+salut"])
+
+
+def test_an_edit_shows_its_diff_and_keeps_it_in_the_history(
+    client, workspace, use_providers, approvals
+):
+    edit = '{"path": "app.py", "old_string": "print(1)", "new_string": "print(2)"}'
+    use_providers(
+        FakeProvider(turns=[[tool_call("edit_file", edit)], [TokenEvent(content="Modifié.")]])
+    )
+    conversation_id, folder = make_project(client, workspace, {"app.py": "x = 1\nprint(1)\n"})
+
+    with ThreadPoolExecutor(1) as pool:
+        streaming = pool.submit(ask, client, conversation_id)
+        decide(client, conversation_id, wait_for_request(approvals, conversation_id), "once")
+        response = streaming.result(timeout=10)
+
+    expected = ["@@ -1,2 +1,2 @@", " x = 1", "-print(1)", "+print(2)"]
+    assert event_of(response, "tool_request")["diff"]["lines"] == expected
+    [step] = client.get(f"/api/conversations/{conversation_id}").json()["messages"][-1]["steps"]
+    assert (step["status"], step["diff"]["added"], step["diff"]["removed"]) == ("done", 1, 1)
+    assert step["diff"]["lines"] == expected
+    assert (folder / "app.py").read_text() == "x = 1\nprint(2)\n"
 
 
 def test_a_refusal_is_told_to_the_model(client, workspace, use_providers, approvals):
@@ -344,6 +371,70 @@ def test_edit_file_needs_a_unique_excerpt(tmp_path):
 
     assert run(toolbox, "edit_file", path="app.py", old_string="a = 1\na", new_string="c = 3\na")
     assert (tmp_path / "app.py").read_text() == "c = 3\na = 1\n"
+
+
+def preview(toolbox: Toolbox, name: str, **arguments):
+    return asyncio.run(toolbox.preview(name, arguments))
+
+
+def test_a_diff_shows_the_changed_lines_with_some_context():
+    old = "".join(f"ligne {i}\n" for i in range(1, 11))
+
+    diff = make_diff("notes.txt", old, old.replace("ligne 5\n", "ligne cinq\nligne 5 bis\n"))
+
+    # Le bloc commence ligne 2 et couvre 7 lignes avant, 8 après : 3 lignes de contexte
+    # de chaque côté du changement.
+    assert diff.lines == [
+        "@@ -2,7 +2,8 @@",
+        " ligne 2",
+        " ligne 3",
+        " ligne 4",
+        "-ligne 5",
+        "+ligne cinq",
+        "+ligne 5 bis",
+        " ligne 6",
+        " ligne 7",
+        " ligne 8",
+    ]
+    assert (diff.added, diff.removed, diff.truncated) == (2, 1, False)
+
+
+def test_a_long_diff_is_cut_but_still_counted(monkeypatch):
+    monkeypatch.setattr(diff_module, "MAX_DIFF_LINES", 10)
+
+    diff = make_diff("gros.txt", "", "".join(f"{i}\n" for i in range(100)), created=True)
+
+    assert (len(diff.lines), diff.added, diff.truncated) == (10, 100, True)
+
+
+def test_a_preview_changes_nothing_on_disk(tmp_path):
+    (tmp_path / "app.py").write_text("a = 1\na = 1\n")
+    toolbox = Toolbox(tmp_path)
+
+    created = preview(toolbox, "write_file", path="src/new.py", content="b = 2\n")
+    assert (created.created, created.lines) == (True, ["@@ -0,0 +1 @@", "+b = 2"])
+    assert not (tmp_path / "src").exists()
+
+    replaced = preview(toolbox, "write_file", path="app.py", content="a = 1\n")
+    assert (replaced.created, replaced.removed) == (False, 1)
+    assert (tmp_path / "app.py").read_text() == "a = 1\na = 1\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("read_file", {"path": "app.py"}),
+        # Un extrait qui apparaît deux fois : l'outil refusera, il n'y a rien à montrer.
+        ("edit_file", {"path": "app.py", "old_string": "a = 1", "new_string": "b = 2"}),
+        ("edit_file", {"path": "absent.py", "old_string": "a", "new_string": "b"}),
+        ("write_file", {"path": "../ailleurs.py", "content": "x"}),
+        ("write_file", {"path": "app.py", "content": 42}),
+    ],
+)
+def test_no_preview_for_other_tools_or_doomed_calls(tmp_path, name, arguments):
+    (tmp_path / "app.py").write_text("a = 1\na = 1\n")
+
+    assert preview(Toolbox(tmp_path), name, **arguments) is None
 
 
 def test_run_command_reports_the_exit_code(tmp_path):

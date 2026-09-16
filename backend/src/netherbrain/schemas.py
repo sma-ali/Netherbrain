@@ -225,6 +225,22 @@ class AttachmentInfo(BaseModel):
     created_at: datetime
 
 
+class FileDiff(BaseModel):
+    """Ce qu'une écriture de l'agent change dans un fichier, présenté comme un `git diff`."""
+
+    path: str
+    # Le fichier n'existait pas encore.
+    created: bool = False
+    added: int
+    removed: int
+    # Les blocs de changements (« hunks ») : un en-tête « @@ -3,4 +3,6 @@ » (où commence le
+    # bloc, et sur combien de lignes, avant et après), puis chaque ligne, préfixée par « + »
+    # (ajoutée), « - » (retirée) ou une espace (contexte inchangé, pour se repérer).
+    lines: list[str]
+    # Trop long pour être montré en entier : seul le début l'est.
+    truncated: bool = False
+
+
 class AgentStep(BaseModel):
     """Un appel d'outil de l'agent, tel qu'on l'affiche et l'enregistre."""
 
@@ -235,6 +251,8 @@ class AgentStep(BaseModel):
     # done : exécuté ; error : l'outil a échoué ; denied : l'utilisateur a refusé.
     status: Literal["done", "error", "denied"]
     output: str
+    # write_file et edit_file : ce que l'écriture change (ou aurait changé, si refusée).
+    diff: FileDiff | None = None
 
 
 class ApprovalRequest(BaseModel):

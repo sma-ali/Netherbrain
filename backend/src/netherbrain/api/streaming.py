@@ -177,6 +177,8 @@ async def _run_call(
     arguments = _arguments(call.arguments)
     summary = toolbox.describe(call.name, arguments or {})
     yield sse("tool_call", {"id": call.id, "name": call.name, "summary": summary})
+    # Pour une écriture : le diff de ce qui va changer, calculé avant de demander l'accord.
+    diff = await toolbox.preview(call.name, arguments) if arguments is not None else None
 
     if arguments is None:
         outcome, state = ToolResult("Arguments are not valid JSON.", error=True), "error"
@@ -209,6 +211,7 @@ async def _run_call(
                     "summary": summary,
                     "kind": "approval",
                     "arguments": arguments,
+                    **({"diff": diff.model_dump()} if diff else {}),
                 },
             )
             # Sans réponse à temps, c'est un refus.
@@ -226,6 +229,9 @@ async def _run_call(
         "status": state,
         "output": outcome.output,
     }
+    if diff:
+        # Gardé avec la réponse : l'historique montre ce que l'agent a changé.
+        step["diff"] = diff.model_dump()
     result.steps.append(step)
     yield sse("tool_result", step)
     # Le résultat repart vers le modèle sous forme de message « tool ».

@@ -13,7 +13,9 @@ from typing import Any
 
 import anyio
 
+from netherbrain.agent.diff import make_diff
 from netherbrain.projects.workspace import Workspace, WorkspaceError
+from netherbrain.schemas import FileDiff
 
 # Dossiers sans intérêt pour l'agent, qui feraient surtout exploser les listings.
 IGNORED = frozenset(
@@ -164,6 +166,37 @@ class Toolbox:
         if len(detail) > 120:
             detail = detail[:117] + "…"
         return f"{name}({detail})"
+
+    async def preview(self, name: str, arguments: dict[str, Any]) -> FileDiff | None:
+        """Ce que write_file ou edit_file changerait, sans rien écrire : à relire avant d'autoriser.
+
+        None pour les autres outils, et pour un appel voué à l'échec (fichier introuvable,
+        extrait absent) : l'erreur viendra de l'exécution, avec son explication.
+        """
+        return await anyio.to_thread.run_sync(lambda: self._preview(name, arguments))
+
+    def _preview(self, name: str, arguments: dict[str, Any]) -> FileDiff | None:
+        path = arguments.get("path")
+        if name not in ("write_file", "edit_file") or not isinstance(path, str):
+            return None
+        try:
+            if name == "write_file":
+                new = arguments.get("content")
+                file = self._files.resolve(path)
+                created = not file.exists()
+                if not isinstance(new, str) or file.is_dir():
+                    return None
+                return make_diff(path, "" if created else self._text(file), new, created=created)
+
+            old_string, new_string = arguments.get("old_string"), arguments.get("new_string")
+            if not isinstance(old_string, str) or not isinstance(new_string, str):
+                return None
+            text = self._text(self._file(path))
+            if text.count(old_string) != 1:
+                return None
+            return make_diff(path, text, text.replace(old_string, new_string))
+        except ToolError, WorkspaceError, OSError:
+            return None
 
     async def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """Exécute l'outil dans un thread : lire un dossier ou lancer une commande bloque."""
