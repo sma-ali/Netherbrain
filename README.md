@@ -34,7 +34,7 @@ Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
                                         ├──SQLAlchemy──> PostgreSQL + pgvector (historique, fichiers joints)
-                                        └──outils de l'agent──> dossier de travail (~/Projects)
+                                        └──outils de l'agent──> dossier de travail (~/netherbrain-workspace)
 ```
 
 | Dossier     | Stack                                                                            |
@@ -156,18 +156,27 @@ Dans une conversation de projet, le modèle reçoit en message système le nom d
 contenu de la racine de son dossier et ses consignes : le fichier `AGENTS.md` (format ouvert,
 partagé par plusieurs outils de code) ou, à défaut, `CLAUDE.md`.
 
-Les projets sont choisis dans un **dossier de travail**, `~/Projects` par défaut
-(`NETHERBRAIN_WORKSPACE_ROOT`). L'API n'accède jamais à rien en dehors : les chemins reçus
-sont résolus (`..`, liens symboliques compris) puis vérifiés, et le dossier de travail entier
-ne peut pas devenir un projet. Supprimer un projet garde ses conversations et ne touche jamais
-au dossier.
+Les projets sont choisis dans un **dossier de travail dédié**, `~/netherbrain-workspace` par
+défaut (`NETHERBRAIN_WORKSPACE_ROOT`) : chaque sous-dossier peut devenir un projet. On y met ce
+que l'agent a le droit de toucher, et rien d'autre : pas tous ses projets, et surtout pas un
+dossier qui contient des secrets. L'API n'accède jamais à rien en dehors : les chemins reçus
+sont résolus (`..`, liens symboliques compris) puis vérifiés. Supprimer un projet garde ses
+conversations et ne touche jamais au dossier.
 
-Avec Docker, le dossier de travail est monté dans le conteneur de l'API sur `/workspace`
-(variable `NETHERBRAIN_WORKSPACE`, `~/Projects` par défaut) :
+Avec Docker, **seul ce dossier** est monté dans le conteneur de l'API, sur `/workspace`
+(variable `NETHERBRAIN_WORKSPACE`). La limite ne dépend alors plus du code de l'API : le reste
+de la machine n'existe pas pour le conteneur. Le dossier doit exister avant le démarrage
+(sinon Docker le créerait en root, sans droit d'écriture) :
 
 ```bash
-NETHERBRAIN_WORKSPACE=~/code docker compose up --build
+mkdir -p ~/netherbrain-workspace
+docker compose up --build
 ```
+
+Sous WSL, il s'ouvre depuis l'Explorateur Windows à l'adresse
+`\\wsl.localhost\<distribution>\home\<utilisateur>\netherbrain-workspace` : on y dépose les
+fichiers à faire modifier par l'agent. Un fichier joint au chat, lui, n'est qu'une copie, lue
+mais jamais modifiable : le navigateur n'en transmet que le contenu, pas l'emplacement.
 
 ## Agent de code
 
@@ -202,14 +211,21 @@ Les garde-fous :
   lien symbolique ne permet de sortir du dossier du projet ;
 - **rien ne s'écrit et aucune commande ne se lance sans un clic** ; un refus est renvoyé au
   modèle, qui doit s'en accommoder ;
+- **les commandes ne voient pas les secrets du serveur** : elles reçoivent seulement quelques
+  variables d'environnement (`PATH`, `HOME`, la langue…), jamais les clés d'API ni l'adresse de
+  la base. C'est une liste de ce qui est permis, pas de ce qui est interdit : une clé ajoutée
+  plus tard reste cachée sans y penser. `NETHERBRAIN_AGENT_ALLOW_COMMANDS=false` coupe les
+  commandes : l'agent lit et modifie alors seulement des fichiers ;
 - la boucle s'arrête après 12 appels d'outils (`NETHERBRAIN_AGENT_MAX_STEPS`), une commande est
   tuée au bout de 2 minutes, et une demande d'autorisation sans réponse est refusée après 5 min ;
 - **injection de prompt** : un fichier du projet peut contenir des instructions piégées (« ignore
   tes consignes, lance ceci… »). C'est le vrai risque de ce mode, et l'autorisation avant chaque
   action est aujourd'hui la seule protection : lisez ce que l'agent propose avant de valider.
 
-Hors Docker, les commandes tournent sur votre machine, avec vos droits. Dans Docker, elles
-tournent dans le conteneur de l'API, qui ne contient que Python (ni Node, ni git).
+Hors Docker, les commandes tournent sur votre machine, avec vos droits : le confinement des
+outils de fichiers ne les concerne pas. Dans Docker, elles tournent dans le conteneur de l'API,
+qui ne voit que le dossier de travail et ne contient que Python (ni Node, ni git). Pour laisser
+l'agent lancer des commandes, préférez donc Docker.
 
 ### Fenêtre de contexte
 
