@@ -25,6 +25,8 @@ interface ComposerProps {
   attachments?: ReactNode
   /** Des fichiers sont encore en cours d'envoi ou de lecture : on ne peut pas envoyer. */
   busy?: boolean
+  /** Ce qui empêche d'envoyer (des images pour un modèle qui ne les lit pas), affiché tel quel. */
+  blocked?: string | null
   /** D'autres boutons, sous le texte, à gauche : le mode agent, par exemple. */
   toolbar?: ReactNode
   /** Le texte déjà saisi à l'ouverture (une demande reprise d'une autre page). */
@@ -40,13 +42,14 @@ export function Composer({
   onAttach,
   attachments,
   busy = false,
+  blocked = null,
   toolbar,
   initialValue = "",
 }: ComposerProps) {
   const [value, setValue] = useState(initialValue)
   const filesInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement>(null)
-  const canSend = !disabled && !streaming && !busy && value.trim() !== ""
+  const canSend = !disabled && !streaming && !busy && !blocked && value.trim() !== ""
 
   const submit = () => {
     if (!canSend) return
@@ -63,6 +66,11 @@ export function Composer({
       className="rounded-2xl border bg-card/60 transition-colors focus-within:border-ring"
     >
       {attachments && <div className="px-3 pt-3">{attachments}</div>}
+      {blocked && (
+        <p role="status" className="px-4 pt-2 text-xs text-amber-600 dark:text-amber-400">
+          {blocked}
+        </p>
+      )}
       <Textarea
         value={value}
         onChange={(event) => setValue(event.target.value)}
@@ -158,7 +166,7 @@ export function Composer({
               size="icon"
               disabled={!canSend}
               aria-label="Send"
-              title={busy ? "Wait until the attached files are read" : undefined}
+              title={blocked ?? (busy ? "Wait until the attached files are read" : undefined)}
             >
               <ArrowUp />
             </Button>

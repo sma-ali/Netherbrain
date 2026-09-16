@@ -14,6 +14,8 @@ export interface ModelInfo {
   provider: string
   // Sait appeler des outils : sans ça, pas de mode agent.
   tools?: boolean
+  // Sait lire des images : sans ça, impossible de lui en envoyer.
+  vision?: boolean
 }
 
 export interface ProviderStatus {
@@ -192,9 +194,11 @@ export interface ComparisonDetail {
 /** Un fichier joint à une conversation. */
 export interface AttachmentInfo {
   id: string
+  conversation_id: string | null
   name: string
   // Chemin dans le dossier joint (« app/src/main.py ») ; null pour un fichier joint seul.
   path: string | null
+  // Une image (image/png…) s'affiche, et part telle quelle aux modèles qui savent la lire.
   content_type: string
   size_bytes: number
   // processing : lecture en cours ; ready : utilisable ; error : voir `error`.
@@ -392,6 +396,10 @@ export async function uploadAttachment(
   })
   return response.json()
 }
+
+/** L'adresse d'une image jointe, pour l'afficher (balise <img>, lien vers l'original). */
+export const attachmentUrl = (conversationId: string, id: string) =>
+  `${API_URL}/api/conversations/${conversationId}/attachments/${id}/content`
 
 export async function deleteAttachment(conversationId: string, id: string): Promise<void> {
   await request(`/api/conversations/${conversationId}/attachments/${id}`, { method: "DELETE" })

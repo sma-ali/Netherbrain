@@ -1,5 +1,6 @@
 "use client"
 
+import { Eye } from "lucide-react"
 import { Fragment } from "react"
 
 import {
@@ -54,7 +55,10 @@ export function ModelPicker({
           <Fragment key={provider.name}>
             {index > 0 && <SelectSeparator />}
             <SelectGroup>
-              <SelectLabel className="flex items-center gap-1.5" title={provider.error ?? undefined}>
+              <SelectLabel
+                className="flex items-center gap-1.5"
+                title={provider.error ?? undefined}
+              >
                 <span
                   className={cn(
                     "size-1.5 rounded-full",
@@ -69,6 +73,12 @@ export function ModelPicker({
                 .map((model) => (
                   <SelectItem key={modelKey(model)} value={modelKey(model)}>
                     <span className="font-mono text-xs">{model.id}</span>
+                    {model.vision && (
+                      <Eye
+                        className="ml-auto size-3.5 self-center text-muted-foreground"
+                        aria-label="Reads images"
+                      />
+                    )}
                   </SelectItem>
                 ))}
             </SelectGroup>

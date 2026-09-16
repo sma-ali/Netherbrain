@@ -2,9 +2,11 @@
 
 import { FileText, Folder, LoaderCircle, TriangleAlert, X } from "lucide-react"
 
+import { attachmentUrl } from "@/lib/api"
 import {
   groupAttachments,
   groupStatus,
+  isImage,
   type AttachmentGroup,
   type AttachmentItem,
 } from "@/lib/attachments"
@@ -16,17 +18,85 @@ interface AttachmentChipsProps {
   /** Retire des fichiers ; sans cette fonction (message déjà envoyé), pas de croix. */
   onRemove?: (ids: string[]) => void
   className?: string
+  /** Des images en grand : dans un message envoyé, plutôt qu'en vignette dans la saisie. */
+  large?: boolean
 }
 
-/** Les fichiers joints, en pastilles : une par fichier seul, une par dossier joint. */
-export function AttachmentChips({ items, onRemove, className }: AttachmentChipsProps) {
+/** Les fichiers joints : les images en vignettes, les autres en pastilles (une par dossier). */
+export function AttachmentChips({
+  items,
+  onRemove,
+  className,
+  large = false,
+}: AttachmentChipsProps) {
   if (items.length === 0) return null
   return (
     <ul className={cn("flex flex-wrap gap-2", className)}>
-      {groupAttachments(items).map((group) => (
+      {items.filter(isImage).map((item) => (
+        <ImageThumbnail key={item.id} item={item} onRemove={onRemove} large={large} />
+      ))}
+      {groupAttachments(items.filter((item) => !isImage(item))).map((group) => (
         <Chip key={group.key} group={group} onRemove={onRemove} />
       ))}
     </ul>
+  )
+}
+
+interface ImageThumbnailProps {
+  item: AttachmentItem
+  onRemove?: (ids: string[]) => void
+  large: boolean
+}
+
+function ImageThumbnail({ item, onRemove, large }: ImageThumbnailProps) {
+  const failed = item.status === "error"
+  // L'adresse n'existe qu'une fois l'image enregistrée par le serveur.
+  const url =
+    item.conversationId && item.status === "ready"
+      ? attachmentUrl(item.conversationId, item.id)
+      : null
+
+  return (
+    <li
+      title={failed ? `${item.name}: ${item.error ?? "Unreadable"}` : item.name}
+      className={cn(
+        "relative overflow-hidden rounded-lg border bg-muted/40",
+        failed && "border-destructive/50",
+      )}
+    >
+      {url ? (
+        // Un lien vers l'original : la vignette peut être rognée.
+        <a href={url} target="_blank" rel="noreferrer" className="block">
+          {/* eslint-disable-next-line @next/next/no-img-element -- servie par l'API, que next/image ne peut pas optimiser */}
+          <img
+            src={url}
+            alt={item.name}
+            className={cn(
+              "block",
+              large ? "max-h-48 max-w-64 object-contain" : "size-16 object-cover",
+            )}
+          />
+        </a>
+      ) : (
+        <span className="flex size-16 items-center justify-center">
+          {failed ? (
+            <TriangleAlert className="size-5 text-destructive" />
+          ) : (
+            <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
+          )}
+        </span>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={() => onRemove([item.id])}
+          aria-label={`Remove ${item.name}`}
+          className="absolute top-1 right-1 rounded-full bg-background/85 p-0.5 text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
+    </li>
   )
 }
 

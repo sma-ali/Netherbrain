@@ -47,6 +47,8 @@ export function useAttachments() {
         path: path ?? null,
         size: file.size,
         status: "uploading",
+        // Une image s'affiche comme telle dès l'envoi, avant même la réponse du serveur.
+        contentType: file.type || null,
       }))
       setItems((prev) => [...prev, ...locals])
 

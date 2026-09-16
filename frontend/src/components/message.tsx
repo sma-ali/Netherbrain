@@ -25,7 +25,7 @@ export function Message({ message, streaming, showModel = true, onApprove }: Mes
     return (
       <div className="flex flex-col items-end gap-2">
         {message.attachments && message.attachments.length > 0 && (
-          <AttachmentChips items={message.attachments} className="max-w-[85%] justify-end" />
+          <AttachmentChips items={message.attachments} className="max-w-[85%] justify-end" large />
         )}
         <div className="max-w-[85%] rounded-2xl bg-secondary px-4 py-2.5 whitespace-pre-wrap">
           {message.content}

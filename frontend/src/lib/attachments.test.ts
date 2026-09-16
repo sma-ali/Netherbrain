@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest"
 
+import type { ModelInfo } from "./api"
 import {
   groupAttachments,
   groupStatus,
+  imageBlocker,
   isIgnored,
+  isImage,
   runPool,
   type AttachmentItem,
 } from "./attachments"
@@ -68,5 +71,35 @@ describe("runPool", () => {
 
     expect(peak).toBe(2)
     expect(done.sort()).toEqual([1, 2, 3, 4, 5])
+  })
+})
+
+describe("images", () => {
+  const image = (status: AttachmentItem["status"] = "ready"): AttachmentItem => ({
+    ...item("capture.png", null, status),
+    contentType: "image/png",
+  })
+  const models: ModelInfo[] = [
+    { id: "gpt-oss:20b", provider: "ollama" },
+    { id: "gemma4:12b", provider: "ollama", vision: true },
+  ]
+
+  it("recognizes images by their type", () => {
+    expect(isImage(image())).toBe(true)
+    expect(isImage({ ...item("a.pdf", null), contentType: "application/pdf" })).toBe(false)
+    expect(isImage(item("pending", null, "uploading"))).toBe(false)
+  })
+
+  it("blocks images for a model that cannot read them, and suggests one that can", () => {
+    expect(imageBlocker([image()], models[0], models)).toBe(
+      "gpt-oss:20b cannot read images: pick a model that can, like gemma4:12b",
+    )
+    expect(imageBlocker([image()], models[1], models)).toBeNull()
+    expect(imageBlocker([item("notes.md", null)], models[0], models)).toBeNull()
+    // Une image illisible ne partira pas : elle ne bloque rien.
+    expect(imageBlocker([image("error")], models[0], models)).toBeNull()
+    expect(imageBlocker([image()], models[0], [models[0]])).toBe(
+      "gpt-oss:20b cannot read images, and no available model can",
+    )
   })
 })

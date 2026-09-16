@@ -1,6 +1,6 @@
 /** Joindre des fichiers au chat : les choisir, écarter le superflu, les regrouper pour l'affichage. */
 
-import type { AttachmentInfo } from "@/lib/api"
+import type { AttachmentInfo, ModelInfo } from "@/lib/api"
 
 /** Un fichier choisi par l'utilisateur, avec son chemin s'il vient d'un dossier. */
 export interface PickedFile {
@@ -19,6 +19,27 @@ export interface AttachmentItem {
   // uploading : envoi en cours ; processing : le serveur lit le fichier.
   status: "uploading" | "processing" | "ready" | "error"
   error?: string | null
+  // Le type du fichier (image/png…) : celui du navigateur pendant l'envoi, puis celui du serveur.
+  contentType?: string | null
+  // La conversation où il est enregistré, pour afficher une image.
+  conversationId?: string | null
+}
+
+export const isImage = (item: AttachmentItem) => item.contentType?.startsWith("image/") === true
+
+/** Pourquoi ces images ne peuvent pas partir vers ce modèle ; null si rien ne l'empêche. */
+export function imageBlocker(
+  items: AttachmentItem[],
+  model: ModelInfo | null,
+  models: ModelInfo[],
+): string | null {
+  const images = items.filter((item) => isImage(item) && item.status !== "error")
+  if (model === null || model.vision || images.length === 0) return null
+  // Les modèles locaux sont en tête de liste : c'est l'un d'eux qu'on suggère en premier.
+  const reader = models.find((candidate) => candidate.vision)
+  return reader
+    ? `${model.id} cannot read images: pick a model that can, like ${reader.id}`
+    : `${model.id} cannot read images, and no available model can`
 }
 
 // Dossiers qu'on ne joint jamais : dépendances, caches et sorties de build, souvent énormes.
@@ -148,5 +169,7 @@ export function fromAttachmentInfo(attachment: AttachmentInfo): AttachmentItem {
     size: attachment.size_bytes,
     status: attachment.status,
     error: attachment.error,
+    contentType: attachment.content_type,
+    conversationId: attachment.conversation_id,
   }
 }

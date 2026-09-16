@@ -27,7 +27,7 @@ import {
   type Project,
   type ProviderStatus,
 } from "@/lib/api"
-import { filesFromDrop, type PickedFile } from "@/lib/attachments"
+import { filesFromDrop, imageBlocker, type PickedFile } from "@/lib/attachments"
 import { cn } from "@/lib/utils"
 
 export function Chat() {
@@ -199,7 +199,7 @@ export function Chat() {
             <Upload className="size-8 text-primary" />
             <p className="font-medium">Drop files or folders to attach them</p>
             <p className="text-xs text-muted-foreground">
-              PDFs and any text file: code, Markdown, CSV…
+              Images, PDFs and any text file: code, Markdown, CSV…
             </p>
           </div>
         )}
@@ -260,6 +260,7 @@ export function Chat() {
             streaming={streaming}
             disabled={!model}
             busy={attachments.busy}
+            blocked={imageBlocker(attachments.items, model, models.models)}
             onAttach={canAttach ? attach : undefined}
             attachments={
               attachments.items.length > 0 ? (
@@ -375,7 +376,7 @@ function EmptyState({
         </p>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Pick a model and ask anything. Drop files or folders to talk about them.
+          Pick a model and ask anything. Drop files, folders or images to talk about them.
         </p>
       )}
       {!error && unavailable.length > 0 && (
