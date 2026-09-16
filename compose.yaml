@@ -35,9 +35,17 @@ services:
       # Le dossier de travail (les projets), monté juste en dessous.
       NETHERBRAIN_WORKSPACE_ROOT: /workspace
     volumes:
-      # Vos projets, ~/Projects par défaut. En lecture et écriture : l'agent modifie les
-      # fichiers du projet, mais seulement après votre accord, action par action.
-      - ${NETHERBRAIN_WORKSPACE:-~/Projects}:/workspace
+      # Le dossier de travail, et lui seul : le conteneur ne voit rien d'autre de la machine,
+      # ni vos autres projets, ni le .env et ses clés. C'est Docker qui garantit cette limite,
+      # même si le code de l'API avait un bug. En écriture, car l'agent modifie les fichiers,
+      # mais seulement après votre accord, action par action.
+      - type: bind
+        source: ${NETHERBRAIN_WORKSPACE:-~/netherbrain-workspace}
+        target: /workspace
+        bind:
+          # Dossier absent : une erreur claire, plutôt qu'un dossier créé par root, où ni vous
+          # ni l'API ne pourriez écrire.
+          create_host_path: false
     extra_hosts:
       - "host.docker.internal:host-gateway" # intégré à Docker Desktop, nécessaire sous Linux
     depends_on:
