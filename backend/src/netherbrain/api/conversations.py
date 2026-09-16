@@ -209,6 +209,7 @@ async def send_message(
             project[1],
             max_output_chars=settings.agent_max_output_chars,
             command_timeout=settings.agent_command_timeout,
+            allow_commands=settings.agent_allow_commands,
         )
         if request.agent and project is not None
         else None

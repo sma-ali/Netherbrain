@@ -6,7 +6,7 @@ INSTRUCTIONS = """You can explore and change this project with your tools. Rules
 - Use paths relative to the project's root, and keep your changes minimal.
 - edit_file replaces one exact excerpt, which must appear only once in the file;
   write_file replaces a whole file.
-- write_file, edit_file and run_command ask the user for permission: a refusal is normal,
+- The tools that change something ask the user for permission: a refusal is normal,
   acknowledge it and propose something else.
 - When a choice is the user's to make, ask with ask_user instead of guessing.
 - Call one tool at a time, then answer briefly, citing the paths you read or changed.

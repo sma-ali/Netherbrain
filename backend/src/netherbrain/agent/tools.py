@@ -4,9 +4,10 @@ Tous les chemins sont confinés au dossier du projet par `Workspace`, la même g
 pour le navigateur de dossiers : ni « .. », ni chemin absolu, ni lien symbolique n'en sort.
 """
 
+import os
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,23 @@ IGNORED = frozenset(
         "coverage",
     }
 )
+
+
+# Les seules variables d'environnement transmises aux commandes : de quoi trouver les
+# programmes et afficher du texte, rien de plus. Une liste de ce qui est permis plutôt que de
+# ce qui est interdit : une clé d'API ajoutée demain restera cachée sans y penser.
+COMMAND_ENVIRONMENT = frozenset(
+    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR"}
+)
+
+
+def command_environment(environ: Mapping[str, str]) -> dict[str, str]:
+    """L'environnement d'une commande de l'agent, sans les secrets du serveur."""
+    return {
+        name: value
+        for name, value in environ.items()
+        if name in COMMAND_ENVIRONMENT or name.startswith("LC_")
+    }
 
 
 class ToolError(Exception):
@@ -136,6 +154,7 @@ class Toolbox:
         max_output_chars: int = 8000,
         max_entries: int = 400,
         command_timeout: int = 120,
+        allow_commands: bool = True,
     ) -> None:
         # Le dossier du projet devient la racine : la même classe qui empêche de sortir
         # du dossier de travail empêche ici de sortir du projet.
@@ -143,6 +162,7 @@ class Toolbox:
         self._max_output = max_output_chars
         self._max_entries = max_entries
         self._command_timeout = command_timeout
+        self._allow_commands = allow_commands
 
     @property
     def folder(self) -> Path:
@@ -150,10 +170,17 @@ class Toolbox:
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
-        return SCHEMAS
+        """Les outils proposés au modèle : sans run_command si les commandes sont coupées."""
+        if self._allow_commands:
+            return SCHEMAS
+        return [schema for schema in SCHEMAS if schema["function"]["name"] != "run_command"]
 
     def needs_approval(self, name: str) -> bool:
-        return name in self.APPROVAL_NEEDED
+        # Un outil indisponible est refusé d'office : inutile de déranger l'utilisateur.
+        return name in self.APPROVAL_NEEDED and name in self._available()
+
+    def _available(self) -> set[str]:
+        return {schema["function"]["name"] for schema in self.schemas}
 
     def describe(self, name: str, arguments: dict[str, Any]) -> str:
         """Résumé court d'un appel, affiché dans l'interface : `read_file(src/api.ts)`."""
@@ -203,11 +230,11 @@ class Toolbox:
         return await anyio.to_thread.run_sync(lambda: self._run(name, arguments))
 
     def _run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        handler = (
-            getattr(self, f"_{name}", None)
-            if name in {s["function"]["name"] for s in SCHEMAS}
-            else None
-        )
+        if name == "run_command" and not self._allow_commands:
+            return ToolResult("Commands are turned off on this server.", error=True)
+        # Un outil que le modèle ne s'est pas vu proposer reste inconnu, même s'il en devine
+        # le nom : c'est la liste des schémas qui fait foi.
+        handler = getattr(self, f"_{name}", None) if name in self._available() else None
         if handler is None:
             return ToolResult(f"Unknown tool: {name}", error=True)
         try:
@@ -293,6 +320,7 @@ class Toolbox:
                 command,
                 shell=True,
                 cwd=self._files.root,
+                env=command_environment(os.environ),
                 capture_output=True,
                 text=True,
                 timeout=self._command_timeout,

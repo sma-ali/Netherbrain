@@ -64,8 +64,9 @@ class Settings(BaseSettings):
 
     # --- Projets ---
     # Le dossier de travail : chaque projet est l'un de ses sous-dossiers, et l'application
-    # n'accède jamais à rien en dehors. Dans Docker, c'est le dossier monté sur /workspace.
-    workspace_root: Path = Path.home() / "Projects"
+    # n'accède jamais à rien en dehors. Un dossier dédié plutôt que tous vos projets : l'agent
+    # n'a accès qu'à ce que vous y mettez. Dans Docker, c'est le dossier monté sur /workspace.
+    workspace_root: Path = Path.home() / "netherbrain-workspace"
 
     # --- Agent de code ---
     # Nombre maximum d'allers-retours modèle → outils pour une seule question.
@@ -76,6 +77,8 @@ class Settings(BaseSettings):
     # accepter ou refuser une action.
     agent_command_timeout: int = 120
     agent_approval_timeout: float = 300.0
+    # False : l'agent ne peut que lire et modifier des fichiers, sans lancer de commande.
+    agent_allow_commands: bool = True
 
     cors_origins: list[str] = ["http://localhost:3000"]
 

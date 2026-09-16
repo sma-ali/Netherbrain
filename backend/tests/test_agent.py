@@ -272,6 +272,29 @@ def test_allowing_a_tool_once_and_for_all(client, workspace, use_providers, appr
     assert (folder / "b.txt").read_text() == "2"
 
 
+def test_without_commands_the_model_is_not_offered_them(
+    client, workspace, use_providers, approvals
+):
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, agent_allow_commands=False
+    )
+    provider = FakeProvider(
+        turns=[
+            [tool_call("run_command", '{"command": "echo bonjour"}')],
+            [TokenEvent(content="Je ne peux pas lancer de commande.")],
+        ]
+    )
+    use_providers(provider)
+    conversation_id, _ = make_project(client, workspace, {"app.py": "x = 1\n"})
+
+    response = ask(client, conversation_id)
+
+    # Refusé d'office : aucune demande d'autorisation, et le modèle sait pourquoi.
+    assert names(response) == ["tool_call", "tool_result", "token", "done"]
+    assert "run_command" not in [schema["function"]["name"] for schema in provider.tools]
+    assert provider.histories[1][-1].content == "Commands are turned off on this server."
+
+
 def test_answering_an_unknown_approval_is_404(client, workspace, approvals):
     conversation_id = client.post("/api/conversations").json()["id"]
 
@@ -435,6 +458,30 @@ def test_no_preview_for_other_tools_or_doomed_calls(tmp_path, name, arguments):
     (tmp_path / "app.py").write_text("a = 1\na = 1\n")
 
     assert preview(Toolbox(tmp_path), name, **arguments) is None
+
+
+def test_commands_do_not_see_the_server_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETHERBRAIN_OPENROUTER_API_KEY", "sk-or-secret")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
+
+    output = run(Toolbox(tmp_path), "run_command", command="env")
+
+    assert "sk-or-secret" not in output
+    assert "aws-secret" not in output
+    # Ce qu'il faut pour trouver les programmes est toujours là.
+    assert "PATH=" in output
+
+
+def test_commands_can_be_turned_off(tmp_path):
+    toolbox = Toolbox(tmp_path, allow_commands=False)
+
+    assert "run_command" not in [schema["function"]["name"] for schema in toolbox.schemas]
+    assert not toolbox.needs_approval("run_command")
+    assert toolbox.needs_approval("write_file")
+    assert run(toolbox, "run_command", command="touch trace") == (
+        "Commands are turned off on this server."
+    )
+    assert not (tmp_path / "trace").exists()
 
 
 def test_run_command_reports_the_exit_code(tmp_path):
