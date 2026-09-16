@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **fichiers joints dans le chat, agent interactif**.
+Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des benchmarks en ligne**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -22,6 +22,7 @@ Développement en cours. Jalon actuel : **fichiers joints dans le chat, agent in
 - [ ] Authentification
 - [x] Comparaison de 2 à 4 modèles côte à côte, avec tableau des métriques et historique
 - [x] Catalogue des modèles : filtres, tris et mesures réelles faites sur votre installation
+- [x] Conseiller : décrivez votre projet, il recommande les modèles adaptés et explique pourquoi
 - [x] Fichiers et dossiers joints directement dans le chat (glisser-déposer, coller), fouillés par RAG quand ils sont longs
 - [x] Projets, façon Claude Code : un dossier de code par projet, avec ses conversations et ses consignes (AGENTS.md)
 - [x] Agent de code : le modèle lit, cherche et modifie les fichiers du projet, chaque action sensible demandant votre accord
@@ -249,16 +250,38 @@ Le délai avant le premier token d'un modèle local inclut son chargement en VRA
 Chaque comparaison est enregistrée : on la retrouve dans l'historique, avec la réponse et les
 métriques de chaque modèle.
 
-## Catalogue des modèles
+## Catalogue des modèles et conseiller
 
-La page `/models` présente une fiche par modèle : taille, contexte, capacités (raisonnement,
-vision, outils, code), prix, et surtout les **mesures réelles** faites par Netherbrain sur votre
-installation (nombre de réponses, vitesse moyenne, délai avant le premier token). On peut
-chercher, filtrer et trier, puis ouvrir un modèle dans le chat ou en sélectionner plusieurs
-pour les comparer.
+La page `/models` s'ouvre sur un **conseiller** : on décrit en une phrase ce qu'on veut faire
+(« un bot Discord qui résume des PDF en français, en local ») et il propose un podium : le
+meilleur choix, une option plus rapide, et un modèle à télécharger ou une alternative cloud.
+Chaque choix est justifié, et un bouton compare les modèles proposés sur la demande elle-même.
 
-Ollama décrit ses modèles via son API native (`/api/tags`) ; OpenRouter et Groq ajoutent leurs
-propres champs à la liste standard au format OpenAI.
+```
+Demande ──LLM (sortie structurée)──> besoins : tâches, capacités exigées, priorité, local ou non
+                                          │
+Modèles disponibles + grille de forces + benchmarks en ligne + vitesses mesurées ici + VRAM
+                                          │
+                              score calculé par du code ──> podium expliqué
+```
+
+- **Comprendre** : un modèle local lit la demande et répond dans un format JSON imposé
+  (sortie structurée d'Ollama). S'il n'y en a aucun de disponible, des mots-clés prennent le relais.
+- **Décider** : c'est du code, pas le LLM, qui classe les modèles. Il ne peut recommander que
+  des modèles réels, et chaque note se justifie.
+- **Savoir** : une grille de forces par famille de modèles, écrite à la main, complétée par
+  les benchmarks publics d'[Artificial Analysis](https://artificialanalysis.ai/) quand une clé
+  d'API gratuite est configurée (`NETHERBRAIN_ARTIFICIAL_ANALYSIS_API_KEY`). Ils sont récupérés
+  au plus une fois par jour et gardés en base ; les noms sont rapprochés automatiquement
+  (« qwen3.5:9b » chez Ollama, « Qwen3.5 9B » chez Artificial Analysis).
+- **Tenir compte de la machine** : les vitesses mesurées par Netherbrain, et la VRAM de la
+  carte graphique (`NETHERBRAIN_GPU_VRAM_GB`, 16 par défaut) : un modèle qui ne tient pas
+  n'est jamais conseillé au téléchargement.
+
+Sous le conseiller, le catalogue présente une fiche par modèle : taille, contexte, capacités
+(raisonnement, vision, outils, code), prix, et les **mesures réelles** faites par Netherbrain
+sur votre installation. On peut chercher, filtrer et trier, puis ouvrir un modèle dans le chat
+ou en sélectionner plusieurs pour les comparer.
 
 ## API
 
@@ -282,6 +305,9 @@ propres champs à la liste standard au format OpenAI.
 | DELETE  | `/api/projects/{id}` | Oublie un projet (ses conversations et son dossier restent) |
 | GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier de travail, pour choisir un projet |
 | GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
+| POST    | `/api/advisor/recommend` | Recommande des modèles pour une demande (`{query}`), avec leurs raisons |
+| GET     | `/api/advisor/benchmarks` | État des benchmarks en ligne : configurés, nombre de modèles, date |
+| POST    | `/api/advisor/benchmarks/sync` | Met à jour les benchmarks tout de suite            |
 | GET     | `/api/comparisons` | Comparaisons, de la plus récente à la plus ancienne     |
 | POST    | `/api/comparisons` | Crée une comparaison (2 à 4 modèles)                    |
 | GET     | `/api/comparisons/{id}` | Une comparaison et les réponses de chaque modèle   |
