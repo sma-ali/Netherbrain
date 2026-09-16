@@ -217,7 +217,7 @@ demande 16384 tokens (`NETHERBRAIN_OLLAMA_CONTEXT_LENGTH`, au prix d'un peu de V
 
 Comme dans Claude, on joint des fichiers **directement dans la conversation** : bouton « + »
 (fichiers ou dossier entier), glisser-déposer n'importe où sur la conversation, ou coller.
-PDF et tout fichier texte sont acceptés, code compris (`.py`, `.tsx`, `Dockerfile`, CSV…).
+Images, PDF et tout fichier texte sont acceptés, code compris (`.py`, `.tsx`, `Dockerfile`, CSV…).
 Dans un dossier, les fichiers cachés (`.env`, `.git`…) et les dépendances (`node_modules`…)
 sont ignorés.
 
@@ -236,6 +236,20 @@ fichier piégé (« ignore tes instructions… ») ne doit pas pouvoir le détou
 Prérequis pour les fichiers longs : le modèle d'embeddings, à installer une fois avec
 `ollama pull nomic-embed-text`. Sans lui, les fichiers courts fonctionnent quand même ; pour les
 longs, seul leur début est envoyé, avec un avertissement.
+
+### Images
+
+Une capture d'écran collée, une photo déposée : les images (PNG, JPEG, WebP, GIF) partent
+**telles quelles** aux modèles qui savent les lire, repérés par un œil dans le sélecteur
+(gemma4, qwen3.5…). Elles sont reconnues à leurs premiers octets, jamais à leur extension, et
+gardées en base : chaque message renvoie l'historique au modèle, images comprises.
+
+- Un modèle sans vision ne reçoit jamais d'image : l'interface bloque l'envoi en suggérant un
+  modèle qui sait les lire, et l'API répond 422. Pour les images des messages précédents, il
+  reçoit seulement une mention (« [Image capture.png: not shown to you] ») : il sait qu'elles
+  existent, sans prétendre les voir.
+- Chaque image coûte des centaines de tokens : seules les 8 plus récentes partent
+  (`NETHERBRAIN_MAX_IMAGES_SENT`).
 
 ## Comparer des modèles
 
@@ -301,6 +315,7 @@ ou en sélectionner plusieurs pour les comparer.
 | POST    | `/api/conversations/{id}/approvals/{call_id}` | Répond à l'agent : autorisation, ou réponse à sa question |
 | GET     | `/api/conversations/{id}/attachments` | Fichiers joints à la conversation et leur état de lecture |
 | POST    | `/api/conversations/{id}/attachments` | Joint un fichier (202 : lecture en tâche de fond)     |
+| GET     | `/api/conversations/{id}/attachments/{attachment_id}/content` | L'image jointe, pour l'afficher |
 | DELETE  | `/api/conversations/{id}/attachments/{attachment_id}` | Retire un fichier joint      |
 | GET     | `/api/projects` | Projets, par ordre alphabétique (dossier, branche Git, consignes) |
 | POST    | `/api/projects` | Crée un projet à partir d'un dossier (`{path, name}`)   |
