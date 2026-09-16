@@ -178,6 +178,11 @@ donne au modèle des outils sur le dossier du projet : `list_files`, `read_file`
 résultat repliable ; une action sensible attend un clic : « Allow once », « Always allow »
 (pour toute la conversation) ou « Deny ».
 
+Avant d'autoriser une écriture, on voit **exactement ce qui va changer** : un diff façon
+`git diff`, lignes retirées en rouge, ajoutées en vert, numérotées, avec 3 lignes de contexte.
+Il est calculé sans rien écrire (`difflib`), puis gardé dans l'historique : on peut revoir
+plus tard ce que l'agent a modifié, fichier par fichier.
+
 Un septième outil, `ask_user`, permet au modèle de **vous poser une question** quand une
 décision vous revient : ses propositions s'affichent en boutons, et vous pouvez aussi taper
 votre propre réponse.
@@ -188,7 +193,7 @@ du projet → résultat renvoyé au modèle → il recommence, jusqu'à 12 fois,
 ```
 
 Le mode n'est proposé qu'aux modèles qui savent appeler des outils (`ornith:9b`, `qwen3.5:9b`,
-`gemma4:12b`, `deepseek-r1:14b`, la plupart des modèles récents) : la route `/api/models` dit
+`gemma4:12b`, `gpt-oss:20b`, la plupart des modèles récents) : la route `/api/models` dit
 lesquels, et le bouton reste grisé pour les autres.
 
 Les garde-fous :
