@@ -431,6 +431,85 @@ export async function listDirectories(
   return response.json()
 }
 
+// --- Conseiller de modèles ---
+
+export type AdvisorTask =
+  "code" | "reasoning" | "writing" | "summary" | "chat" | "vision" | "agent" | "multilingual"
+
+/** Ce que la demande exige d'un modèle, tel que le serveur l'a compris. */
+export interface Needs {
+  tasks: AdvisorTask[]
+  requires: ("vision" | "tools" | "long_context")[]
+  priority: "quality" | "balanced" | "speed"
+  local_only: boolean
+}
+
+export interface ModelPick {
+  // best : le meilleur choix ; fastest : presque aussi bon, plus rapide ;
+  // download : meilleur que ce qui est installé ; cloud : une alternative distante.
+  role: "best" | "fastest" | "download" | "cloud"
+  // null pour un modèle pas encore installé.
+  provider: string | null
+  model: string
+  local: boolean
+  // Utilisable tout de suite : installé, ou chez un fournisseur distant disponible.
+  ready: boolean
+  score: number
+  reasons: string[]
+  warnings: string[]
+  pull_command: string | null
+  // Le modèle retrouvé dans les benchmarks en ligne, s'il y en a un.
+  benchmark: string | null
+}
+
+export interface BenchmarksStatus {
+  source: string
+  url: string
+  // false sans clé d'API : le classement n'utilise que la grille écrite à la main.
+  configured: boolean
+  models: number
+  fetched_at: string | null
+  error: string | null
+}
+
+export interface Recommendation {
+  query: string
+  needs: Needs
+  // Le modèle qui a compris la demande, ou « keywords ».
+  understood_by: string
+  picks: ModelPick[]
+  benchmarks: BenchmarksStatus
+  warnings: string[]
+}
+
+/**
+ * Le podium des modèles adaptés à une demande décrite en une phrase.
+ * `understand: false` : lecture par mots-clés, instantanée ; sinon un LLM lit la demande.
+ */
+export async function recommendModels(
+  query: string,
+  { understand = true, signal }: { understand?: boolean; signal?: AbortSignal } = {},
+): Promise<Recommendation> {
+  const response = await request("/api/advisor/recommend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, understand }),
+    signal,
+  })
+  return response.json()
+}
+
+export async function fetchBenchmarksStatus(signal?: AbortSignal): Promise<BenchmarksStatus> {
+  const response = await request("/api/advisor/benchmarks", { signal })
+  return response.json()
+}
+
+/** Met à jour les benchmarks en ligne tout de suite. */
+export async function syncBenchmarks(): Promise<BenchmarksStatus> {
+  const response = await request("/api/advisor/benchmarks/sync", { method: "POST" })
+  return response.json()
+}
+
 // --- Mode sans historique ---
 
 /** Envoie toute la conversation ; rien n'est enregistré côté serveur. */

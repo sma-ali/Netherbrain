@@ -27,6 +27,8 @@ interface ComposerProps {
   busy?: boolean
   /** D'autres boutons, sous le texte, à gauche : le mode agent, par exemple. */
   toolbar?: ReactNode
+  /** Le texte déjà saisi à l'ouverture (une demande reprise d'une autre page). */
+  initialValue?: string
 }
 
 export function Composer({
@@ -39,8 +41,9 @@ export function Composer({
   attachments,
   busy = false,
   toolbar,
+  initialValue = "",
 }: ComposerProps) {
-  const [value, setValue] = useState("")
+  const [value, setValue] = useState(initialValue)
   const filesInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement>(null)
   const canSend = !disabled && !streaming && !busy && value.trim() !== ""

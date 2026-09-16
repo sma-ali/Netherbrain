@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useState } from "react"
 
 import { AppNav } from "@/components/app-nav"
+import { ModelAdvisor } from "@/components/model-advisor"
 import { Sidebar } from "@/components/sidebar"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -71,58 +72,62 @@ export function ModelsCatalog() {
           </Button>
         </header>
 
-        <section className="flex flex-col gap-3 border-b px-4 py-3">
-          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2">
-            <label className="relative min-w-56 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search a model, a provider, a use…"
-                aria-label="Search models"
-                className="h-8 w-full rounded-lg border border-input bg-transparent pr-2.5 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-              />
-            </label>
-            <Select
-              value={sort}
-              onValueChange={(next) => {
-                if (typeof next === "string") setSort(next as CatalogSort)
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Sort by" className="min-w-40">
-                <span>Sort: {SORTS.find((s) => s.value === sort)?.label}</span>
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false} align="end">
-                {SORTS.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="mx-auto flex w-full max-w-6xl flex-wrap gap-1.5">
-            {FILTERS.map(({ value, label, hint }) => (
-              <button
-                key={value}
-                type="button"
-                title={hint}
-                aria-pressed={filters.has(value)}
-                onClick={() => toggleFilter(value)}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent",
-                  filters.has(value) && "border-primary bg-primary/15 text-primary hover:bg-primary/20",
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </section>
-
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6">
+            <ModelAdvisor />
+
+            <div className="flex flex-col gap-3 pt-4">
+              <h2 className="font-semibold tracking-tight">All models</h2>
+              <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2">
+                <label className="relative min-w-56 flex-1">
+                  <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search a model, a provider, a use…"
+                    aria-label="Search models"
+                    className="h-8 w-full rounded-lg border border-input bg-transparent pr-2.5 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                  />
+                </label>
+                <Select
+                  value={sort}
+                  onValueChange={(next) => {
+                    if (typeof next === "string") setSort(next as CatalogSort)
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Sort by" className="min-w-40">
+                    <span>Sort: {SORTS.find((s) => s.value === sort)?.label}</span>
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} align="end">
+                    {SORTS.map((s) => (
+                      <SelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mx-auto flex w-full max-w-6xl flex-wrap gap-1.5">
+                {FILTERS.map(({ value, label, hint }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    title={hint}
+                    aria-pressed={filters.has(value)}
+                    onClick={() => toggleFilter(value)}
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs transition-colors hover:bg-accent",
+                      filters.has(value) &&
+                        "border-primary bg-primary/15 text-primary hover:bg-primary/20",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {unavailable.length > 0 && (
               <p className="text-xs text-muted-foreground">
                 Unavailable right now: {unavailable.map((p) => p.name).join(", ")}.
@@ -143,9 +148,7 @@ export function ModelsCatalog() {
                 </Button>
               </div>
             ) : catalog.status === "loading" ? (
-              <p className="pt-[12vh] text-center text-sm text-muted-foreground">
-                Loading models…
-              </p>
+              <p className="pt-[12vh] text-center text-sm text-muted-foreground">Loading models…</p>
             ) : visible.length === 0 ? (
               <p className="pt-[12vh] text-center text-sm text-muted-foreground">
                 No model matches these filters.
@@ -179,7 +182,10 @@ export function ModelsCatalog() {
                 Clear
               </Button>
               {picked.length >= 2 ? (
-                <Link href={compareHref} className={buttonVariants({ size: "sm", className: "ml-auto" })}>
+                <Link
+                  href={compareHref}
+                  className={buttonVariants({ size: "sm", className: "ml-auto" })}
+                >
                   <Swords />
                   Compare them
                 </Link>

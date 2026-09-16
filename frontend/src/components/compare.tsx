@@ -125,10 +125,12 @@ export function Compare() {
           ) : contenders.length === 0 ? (
             <div className="flex flex-col items-center gap-3 px-4 pt-[16vh] text-center">
               <Swords className="size-12 text-primary" strokeWidth={1.5} />
-              <h1 className="text-2xl font-semibold tracking-tight">One question, several minds.</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                One question, several minds.
+              </h1>
               <p className="max-w-md text-sm text-muted-foreground">
-                Pick two to four models and compare their answers and speed. Local models run
-                one at a time, since they share your GPU.
+                Pick two to four models and compare their answers and speed. Local models run one at
+                a time, since they share your GPU.
               </p>
             </div>
           ) : (
@@ -152,6 +154,8 @@ export function Compare() {
 
         <footer className="mx-auto w-full max-w-3xl px-4 pb-4">
           <Composer
+            // Le conseiller peut ouvrir la comparaison avec la demande déjà écrite.
+            initialValue={searchParams.get("prompt") ?? undefined}
             onSend={(text) => run(text, selected, localProviders)}
             onStop={stop}
             streaming={running}
