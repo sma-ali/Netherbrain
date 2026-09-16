@@ -18,10 +18,11 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 
+import { DiffStats, DiffView } from "@/components/diff-view"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
-import type { AgentStep, ToolDecision } from "@/lib/api"
+import type { AgentStep, FileDiff, ToolDecision } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 const ICONS: Record<string, LucideIcon> = {
@@ -58,7 +59,7 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
         <Question step={step} onAnswer={(answer) => onApprove?.(step.id, "answer", answer)} />
       ) : asking ? (
         <>
-          <Preview step={step} />
+          {step.diff ? <DiffView diff={step.diff} className="mt-2" /> : <Preview step={step} />}
           <div className="mt-2 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => onApprove?.(step.id, "once")}>
               Allow once
@@ -71,6 +72,8 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
             </Button>
           </div>
         </>
+      ) : step.diff && step.status === "done" ? (
+        <Changes diff={step.diff} summary={step.output} />
       ) : (
         step.output && <Output text={step.output} failed={step.status !== "done"} />
       )}
@@ -136,7 +139,7 @@ function Question({ step, onAnswer }: { step: AgentStep; onAnswer: (answer: stri
   )
 }
 
-/** Ce que l'agent s'apprête à faire : à lire avant d'autoriser. */
+/** Ce que l'agent s'apprête à faire, quand ce n'est pas une écriture : à lire avant d'autoriser. */
 function Preview({ step }: { step: AgentStep }) {
   const args = step.arguments ?? {}
   const text =
@@ -152,6 +155,22 @@ function Preview({ step }: { step: AgentStep }) {
     <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
       {text.slice(0, 2000)}
     </pre>
+  )
+}
+
+/** Une écriture faite : son résultat, et le diff à déplier pour revoir ce qui a changé. */
+function Changes({ diff, summary }: { diff: FileDiff; summary: string }) {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group mt-1 flex w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+        <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-panel-open:rotate-90" />
+        <span className="truncate">{summary}</span>
+        <DiffStats diff={diff} className="ml-1" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <DiffView diff={diff} className="mt-1" />
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

@@ -49,6 +49,19 @@ export interface Source {
   score: number
 }
 
+/** Ce qu'une écriture de l'agent change dans un fichier, présenté comme un `git diff`. */
+export interface FileDiff {
+  path: string
+  // Le fichier n'existait pas encore.
+  created: boolean
+  added: number
+  removed: number
+  // Les blocs : un en-tête « @@ -3,4 +3,6 @@ », puis les lignes préfixées par +, - ou une espace.
+  lines: string[]
+  // Trop long : seul le début est là.
+  truncated: boolean
+}
+
 /** Un appel d'outil de l'agent : ce qu'il a demandé, et ce que ça a donné. */
 export interface AgentStep {
   id: string
@@ -64,6 +77,8 @@ export interface AgentStep {
   kind?: "approval" | "question"
   question?: string
   options?: string[]
+  // write_file et edit_file : ce que l'écriture change, à relire avant d'autoriser.
+  diff?: FileDiff | null
 }
 
 // once, always, deny : pour une action ; answer : pour répondre à une question de l'agent.
@@ -83,6 +98,7 @@ export type ChatEvent =
       arguments?: Record<string, unknown>
       question?: string
       options?: string[]
+      diff?: FileDiff
     }
   | {
       type: "tool_result"
@@ -91,6 +107,7 @@ export type ChatEvent =
       summary: string
       status: string
       output: string
+      diff?: FileDiff
     }
   | { type: "done"; metrics: ChatMetrics }
   | { type: "error"; message: string }

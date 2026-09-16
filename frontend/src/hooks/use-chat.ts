@@ -192,6 +192,7 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
                   arguments: event.arguments,
                   question: event.question,
                   options: event.options,
+                  diff: event.diff,
                 }),
               }))
               break
@@ -200,6 +201,8 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
                 steps: updateStep(m.steps, event.id, {
                   status: event.status as AgentStep["status"],
                   output: event.output,
+                  // Un appel autorisé d'avance n'a pas eu de demande : le diff arrive ici.
+                  ...(event.diff ? { diff: event.diff } : {}),
                 }),
               }))
               break
