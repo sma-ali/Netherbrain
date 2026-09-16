@@ -272,9 +272,11 @@ def _skill(c: Candidate, task: str, benchmarks_available: bool) -> tuple[float, 
     if grid is not None:
         if metric and benchmarks_available:
             # La tâche est mesurée publiquement, mais pas pour ce modèle : moins de preuves.
+            # Le modèle peut être évalué ailleurs (vitesse, autres scores) sans l'être ici.
+            missing = "no public score for this task" if c.benchmark else "no public benchmark"
             return (
                 grid / 5 * GRID_ONLY_CONFIDENCE,
-                f"{label}: {grid}/5 in Netherbrain's model grid (no public benchmark)",
+                f"{label}: {grid}/5 in Netherbrain's model grid ({missing})",
             )
         return grid / 5, f"{label}: {grid}/5 in Netherbrain's model grid"
     return UNKNOWN_SKILL, None

@@ -317,6 +317,18 @@ def test_without_a_public_benchmark_the_grid_counts_a_little_less():
     assert "Code: 5/5 in Netherbrain's model grid (no public benchmark)" in among_measured.reasons
 
 
+def test_a_benchmarked_model_can_lack_a_score_for_the_task():
+    # Cas réel : Nemotron 3 Super a un score de code et une vitesse, mais pas de score de maths.
+    index = BenchmarkIndex(
+        [entry("Ornith 9B", intelligence=20), *[entry(f"Model {n}B", coding=n) for n in (1, 2)]]
+    )
+    candidates = [candidate("ornith:9b", size_gb=5.6, index=index)]
+
+    [(_, best)] = recommend_models(CODE, candidates, 16, benchmarks_available=True)
+
+    assert "Code: 5/5 in Netherbrain's model grid (no public score for this task)" in best.reasons
+
+
 def test_a_better_model_is_suggested_for_download_when_it_fits():
     candidates = [
         candidate("gemma4:12b", size_gb=7.6),
