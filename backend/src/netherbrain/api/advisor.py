@@ -114,7 +114,13 @@ async def recommend(
     else:
         needs, understood_by = needs_from_keywords(request.query), "keywords"
     index = BenchmarkIndex(entries) if entries else None
-    candidates = build_candidates(cards, stats, index, suggest_downloads=local_up)
+    candidates = build_candidates(
+        cards,
+        stats,
+        index,
+        suggest_downloads=local_up,
+        experts=await _experts(results, registry),
+    )
     picks = recommend_models(
         needs, candidates, settings.gpu_vram_gb, benchmarks_available=index is not None
     )
@@ -156,6 +162,22 @@ async def _understand(
         except (UnknownProviderError, ProviderError, TimeoutError, ValidationError) as exc:
             logger.warning("Request read from keywords, %s failed: %s", advisor.model, exc)
     return needs_from_keywords(query), "keywords"
+
+
+async def _experts(
+    results: list[ProviderResult[ModelCard]], registry: ProviderRegistry
+) -> dict[str, tuple[int, int]]:
+    """Les modèles locaux « Mixture of Experts », plus rapides que leur taille ne le laisse croire.
+
+    Seul Ollama sait le dire : les autres fournisseurs n'ont pas la méthode.
+    """
+    experts: dict[str, tuple[int, int]] = {}
+    for result in results:
+        if not result.local or result.error is not None:
+            continue
+        if describe := getattr(registry.get(result.name), "mixture_of_experts", None):
+            experts.update(await describe([card.id for card in result.items]))
+    return experts
 
 
 def _pick(role: Role, scored: Scored) -> ModelPick:

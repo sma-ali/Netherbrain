@@ -1,6 +1,7 @@
 """Le conseiller : comprendre la demande, retrouver les benchmarks, classer les modèles."""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -37,6 +38,7 @@ def candidate(
     ready: bool = True,
     context: int = 131_072,
     tps: float | None = None,
+    experts: tuple[int, int] | None = None,
     index: BenchmarkIndex | None = None,
 ) -> Candidate:
     return Candidate(
@@ -49,6 +51,7 @@ def candidate(
         context_length=context,
         free=True,
         measured_tps=tps,
+        experts=experts,
         profile=profile_for(model),
         benchmark=index.match(model) if index else None,
     )
@@ -329,6 +332,32 @@ def test_a_benchmarked_model_can_lack_a_score_for_the_task():
     assert "Code: 5/5 in Netherbrain's model grid (no public score for this task)" in best.reasons
 
 
+def test_a_mixture_of_experts_is_faster_than_its_size_suggests():
+    dense = candidate("mistral-small:24b", size_gb=13.8)
+    moe = candidate("gpt-oss:20b", size_gb=13.8, experts=(32, 4))
+
+    [(_, dense_pick)] = recommend_models(Needs(tasks=["chat"]), [dense], 16)
+    [(_, moe_pick)] = recommend_models(Needs(tasks=["chat"]), [moe], 16)
+
+    assert "About 36 tok/s expected on your GPU" in dense_pick.reasons
+    # 105 tok/s mesurés en vrai sur une RTX 4080 Super.
+    expected = "About 107 tok/s expected on your GPU (only 4 of its 32 experts work on each token)"
+    assert expected in moe_pick.reasons
+
+
+def test_an_installed_mixture_of_experts_is_not_ruled_out_by_its_size():
+    # Cas réel : une fois installé, gpt-oss disparaissait du podium, derrière deepseek-r1,
+    # parce que sa vitesse était estimée d'après toute sa taille (36 tok/s au lieu de 105).
+    candidates = [
+        candidate("deepseek-r1:14b", size_gb=9.0, tps=65.7),
+        candidate("gpt-oss:20b", size_gb=13.8, experts=(32, 4)),
+    ]
+
+    role, first = recommend_models(Needs(tasks=["reasoning"]), candidates, 16)[0]
+
+    assert (role, first.candidate.model) == ("best", "gpt-oss:20b")
+
+
 def test_a_better_model_is_suggested_for_download_when_it_fits():
     candidates = [
         candidate("gemma4:12b", size_gb=7.6),
@@ -553,6 +582,50 @@ def test_a_model_already_in_memory_reads_the_request():
     assert pick_advisor_model(results, None).model == "qwen3.5:9b"
     assert pick_advisor_model(results, None, frozenset({"ornith:9b"})).model == "ornith:9b"
     assert pick_advisor_model(results, "openrouter/some-model").provider == "openrouter"
+
+
+def test_the_advice_knows_which_local_models_are_mixtures_of_experts(client, use_providers):
+    class MixtureOfExperts(FakeProvider):
+        async def describe_models(self) -> list[ModelCard]:
+            cards = await super().describe_models()
+            return [card.model_copy(update={"size_bytes": 13_800_000_000}) for card in cards]
+
+        async def mixture_of_experts(self, models: list[str]) -> dict[str, tuple[int, int]]:
+            self.asked = models
+            return {"gpt-oss:20b": (32, 4)}
+
+    use_settings()
+    provider = MixtureOfExperts("ollama", models=["gpt-oss:20b"], local=True)
+    use_providers(provider)
+
+    response = client.post(
+        "/api/advisor/recommend", json={"query": "Discuter de tout", "understand": False}
+    )
+
+    best = response.json()["picks"][0]
+    assert provider.asked == ["gpt-oss:20b"]
+    assert best["model"] == "gpt-oss:20b"
+    assert any("only 4 of its 32 experts" in reason for reason in best["reasons"])
+
+
+def test_ollama_describes_mixtures_of_experts():
+    def show(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        if model == "broken:1b":
+            return httpx.Response(500)
+        if model == "gpt-oss:20b":
+            info = {"gptoss.expert_count": 32, "gptoss.expert_used_count": 4}
+        else:
+            info = {"qwen2.block_count": 48}  # un modèle dense
+        return httpx.Response(200, json={"model_info": info})
+
+    provider = OllamaProvider("http://ollama.test:11434/v1", transport=httpx.MockTransport(show))
+
+    experts = asyncio.run(
+        provider.mixture_of_experts(["gpt-oss:20b", "deepseek-r1:14b", "broken:1b"])
+    )
+
+    assert experts == {"gpt-oss:20b": (32, 4)}
 
 
 def test_ollama_says_which_models_are_loaded():

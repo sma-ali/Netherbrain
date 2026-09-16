@@ -42,6 +42,12 @@ LONG_CONTEXT = 32_000
 CONTEXT_OVERHEAD_GB = 1.5
 # Ordre de grandeur sur une carte récente : un modèle de 5 Go génère environ 100 tokens/s.
 LOCAL_SPEED_FACTOR = 500
+# Un modèle « Mixture of Experts » ne lit, pour chaque token, que ses experts actifs et une
+# part commune (attention, embeddings) : environ 5 % des poids pour gpt-oss, Qwen3 30B-A3B
+# ou Mixtral. Aiguiller les tokens entre experts a un coût, calibré sur gpt-oss:20b
+# (105 tokens/s mesurés sur une RTX 4080 Super) : seule une mesure réelle fait foi.
+SHARED_WEIGHTS = 0.05
+MOE_SPEED_PENALTY = 2
 # Au-delà, une vitesse est jugée excellente (en local, puis chez un fournisseur cloud).
 FAST_LOCAL = 80
 FAST_CLOUD = 150
@@ -64,6 +70,8 @@ class Candidate:
     context_length: int | None
     free: bool | None
     measured_tps: float | None = None
+    # « Mixture of Experts » : (experts, experts actifs par token).
+    experts: tuple[int, int] | None = None
     profile: FamilyProfile | None = None
     benchmark: BenchmarkMatch | None = None
 
@@ -84,6 +92,7 @@ def build_candidates(
     index: BenchmarkIndex | None,
     *,
     suggest_downloads: bool,
+    experts: dict[str, tuple[int, int]] | None = None,
 ) -> list[Candidate]:
     """Les modèles disponibles, plus ceux qu'on pourrait conseiller de télécharger."""
     candidates = []
@@ -102,6 +111,7 @@ def build_candidates(
                 context_length=card.context_length,
                 free=card.free,
                 measured_tps=measured.avg_tokens_per_second if measured else None,
+                experts=(experts or {}).get(card.id) if card.local else None,
                 profile=profile_for(card.id),
                 benchmark=(
                     index.match(
@@ -130,6 +140,7 @@ def build_candidates(
                     size_gb=suggestion.size_gb,
                     context_length=suggestion.context_length,
                     free=True,
+                    experts=suggestion.experts,
                     profile=profile_for(suggestion.model),
                     benchmark=(
                         index.match(
@@ -288,14 +299,27 @@ def _speed(c: Candidate, too_big: bool) -> tuple[float, str | None]:
         return min(c.measured_tps / FAST_LOCAL, 1.0), f"Measured here: {c.measured_tps:g} tok/s"
     if c.local and c.size_gb:
         # Un modèle qui déborde de la VRAM passe en partie sur le processeur : bien plus lent.
-        estimate = LOCAL_SPEED_FACTOR / c.size_gb / (5 if too_big else 1)
-        return min(
-            estimate / FAST_LOCAL, 1.0
-        ), f"About {round(estimate)} tok/s expected on your GPU"
+        estimate = (
+            LOCAL_SPEED_FACTOR / _weights_read_gb(c.size_gb, c.experts) / (5 if too_big else 1)
+        )
+        reason = f"About {round(estimate)} tok/s expected on your GPU"
+        if c.experts:
+            total, used = c.experts
+            reason += f" (only {used} of its {total} experts work on each token)"
+        return min(estimate / FAST_LOCAL, 1.0), reason
     if c.benchmark and c.benchmark.output_speed:
         speed = c.benchmark.output_speed
         return min(speed / FAST_CLOUD, 1.0), f"About {round(speed)} tok/s at cloud providers"
     return 0.5, None
+
+
+def _weights_read_gb(size_gb: float, experts: tuple[int, int] | None) -> float:
+    """Les Go de poids lus pour générer un token : tout le modèle, sauf pour un MoE."""
+    if not experts:
+        return size_gb
+    total, used = experts
+    share = SHARED_WEIGHTS + (1 - SHARED_WEIGHTS) * used / total
+    return size_gb * min(share * MOE_SPEED_PENALTY, 1.0)
 
 
 def _thousands(tokens: int) -> str:

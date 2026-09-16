@@ -258,6 +258,8 @@ class Suggestion:
     size_gb: float
     capabilities: tuple[str, ...]
     context_length: int
+    # « Mixture of Experts » : (experts, experts actifs par token), lus dans `ollama show`.
+    experts: tuple[int, int] | None = None
 
 
 # Tailles relevées sur ollama.com (version quantifiée par défaut de chaque modèle).
@@ -269,7 +271,7 @@ SUGGESTIONS: list[Suggestion] = [
     Suggestion("deepseek-r1:14b", 9.0, ("reasoning", "tools"), 131_072),
     Suggestion("phi4:14b", 9.1, (), 16_384),
     Suggestion("llama3.1:8b", 4.9, ("tools",), 131_072),
-    Suggestion("gpt-oss:20b", 14.0, ("reasoning", "tools"), 131_072),
+    Suggestion("gpt-oss:20b", 14.0, ("reasoning", "tools"), 131_072, experts=(32, 4)),
     Suggestion("devstral:24b", 14.0, ("tools",), 131_072),
     Suggestion("mistral-small:24b", 14.0, ("tools",), 32_768),
 ]

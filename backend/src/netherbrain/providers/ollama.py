@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -117,6 +118,31 @@ class OllamaProvider(OpenAICompatibleProvider):
         except httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError:
             return []
 
+    async def mixture_of_experts(self, models: list[str]) -> dict[str, tuple[int, int]]:
+        """Les modèles « Mixture of Experts » parmi ceux-ci : (experts, experts actifs par token).
+
+        Ces nombres ne figurent que dans la fiche détaillée (POST /api/show) : un modèle dense,
+        ou dont la fiche est illisible, est simplement absent du résultat.
+        """
+        async with httpx.AsyncClient(timeout=5, transport=self._transport) as client:
+            infos = await asyncio.gather(*(self._model_info(client, model) for model in models))
+        experts = {}
+        for model, info in zip(models, infos, strict=True):
+            total = _info_ending(info, ".expert_count")
+            used = _info_ending(info, ".expert_used_count")
+            if total and used:
+                experts[model] = (total, used)
+        return experts
+
+    async def _model_info(self, client: httpx.AsyncClient, model: str) -> dict[str, Any]:
+        try:
+            response = await client.post(f"{self._native_url}/api/show", json={"model": model})
+            response.raise_for_status()
+            info = response.json().get("model_info")
+        except httpx.HTTPError, ValueError, AttributeError:
+            return {}
+        return info if isinstance(info, dict) else {}
+
     async def complete_json(
         self,
         model: str,
@@ -186,6 +212,14 @@ def as_object(arguments: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _info_ending(info: dict[str, Any], suffix: str) -> int | None:
+    """Une valeur de la fiche, préfixée par l'architecture : « gptoss.expert_count »."""
+    return next(
+        (value for key, value in info.items() if key.endswith(suffix) and isinstance(value, int)),
+        None,
+    )
 
 
 def stream_events(chunk: dict[str, Any]) -> Iterator[StreamEvent]:

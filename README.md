@@ -276,7 +276,10 @@ Modèles disponibles + grille de forces + benchmarks en ligne + vitesses mesuré
   (« qwen3.5:9b » chez Ollama, « Qwen3.5 9B » chez Artificial Analysis).
 - **Tenir compte de la machine** : les vitesses mesurées par Netherbrain, et la VRAM de la
   carte graphique (`NETHERBRAIN_GPU_VRAM_GB`, 16 par défaut) : un modèle qui ne tient pas
-  n'est jamais conseillé au téléchargement.
+  n'est jamais conseillé au téléchargement. Sans mesure, la vitesse est estimée d'après la
+  taille du modèle, en tenant compte des modèles « Mixture of Experts » (comme gpt-oss) qui ne
+  font travailler qu'une partie de leurs poids à chaque token : leurs experts sont lus dans la
+  fiche détaillée d'Ollama.
 
 Sous le conseiller, le catalogue présente une fiche par modèle : taille, contexte, capacités
 (raisonnement, vision, outils, code), prix, et les **mesures réelles** faites par Netherbrain
