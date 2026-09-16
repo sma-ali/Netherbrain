@@ -115,7 +115,9 @@ async def recommend(
         needs, understood_by = needs_from_keywords(request.query), "keywords"
     index = BenchmarkIndex(entries) if entries else None
     candidates = build_candidates(cards, stats, index, suggest_downloads=local_up)
-    picks = recommend_models(needs, candidates, settings.gpu_vram_gb)
+    picks = recommend_models(
+        needs, candidates, settings.gpu_vram_gb, benchmarks_available=index is not None
+    )
 
     warnings = []
     if not local_up:

@@ -23,8 +23,8 @@ from netherbrain.providers import OllamaProvider, ProviderResult
 from netherbrain.schemas import ModelCard, Needs
 
 
-def entry(name: str, **scores) -> BenchmarkEntry:
-    slug = name.lower().replace(" ", "-").replace(".", "-")
+def entry(name: str, slug: str | None = None, **scores) -> BenchmarkEntry:
+    slug = slug or name.lower().replace(" ", "-").replace(".", "-")
     return BenchmarkEntry(source_id=name, name=name, slug=slug, **scores)
 
 
@@ -136,6 +136,35 @@ def test_models_are_found_despite_different_names(model, expected):
 @pytest.mark.parametrize("model", ["qwen3:4b", "llama3.1:8b", "qwen3"])
 def test_no_match_rather_than_a_wrong_one(model):
     assert BENCHMARKED.match(model) is None
+
+
+def test_the_mode_matching_the_installed_model_is_chosen():
+    # Vu dans les vraies données : le même modèle évalué dans ses deux modes, et un « slug »
+    # qui ne dit pas lequel.
+    index = BenchmarkIndex(
+        [
+            entry("Qwen3 8B (Non-reasoning)", slug="qwen3-8b-instruct", intelligence=20),
+            entry("Qwen3 8B (Reasoning)", slug="qwen3-8b-instruct-reasoning", intelligence=30),
+        ]
+    )
+
+    assert index.match("qwen3:8b", reasoning=True).name == "Qwen3 8B (Reasoning)"
+    assert index.match("qwen3:8b", reasoning=False).name == "Qwen3 8B (Non-reasoning)"
+    # Sans information, le mode le mieux noté.
+    assert index.match("qwen3:8b").name == "Qwen3 8B (Reasoning)"
+
+
+def test_small_models_are_compared_with_their_size_class():
+    small = [entry(f"Open {n}B", coding=n) for n in range(10, 30)]  # 20 modèles de 10 à 29B
+    giants = [entry(f"Giant {n}", coding=100 + n) for n in range(20)]  # taille inconnue
+    index = BenchmarkIndex([*small, *giants])
+
+    local = index.match("open:25b", small=True)
+    cloud = index.match("open:25b")
+
+    # 15 des 20 petits modèles font moins bien ; parmi les 40, les géants passent devant.
+    assert (local.percentiles["coding"], local.small) == (0.75, True)
+    assert (cloud.percentiles["coding"], cloud.small) == (15 / 40, False)
 
 
 def test_percentiles_say_how_many_models_are_beaten():
@@ -275,6 +304,17 @@ def test_benchmarks_can_overturn_the_grid():
 
     assert best.candidate.model == "gemma4:12b"
     assert any("better than 95%" in reason for reason in best.reasons)
+
+
+def test_without_a_public_benchmark_the_grid_counts_a_little_less():
+    index = BenchmarkIndex([entry(f"Model {n}B", coding=n) for n in (1, 2, 3, 4)])
+    candidates = [candidate("ornith:9b", size_gb=5.6, index=index)]
+
+    [(_, alone)] = recommend_models(CODE, candidates, 16)
+    [(_, among_measured)] = recommend_models(CODE, candidates, 16, benchmarks_available=True)
+
+    assert among_measured.fit == pytest.approx(alone.fit * 0.9)
+    assert "Code: 5/5 in Netherbrain's model grid (no public benchmark)" in among_measured.reasons
 
 
 def test_a_better_model_is_suggested_for_download_when_it_fits():

@@ -47,6 +47,9 @@ FAST_LOCAL = 80
 FAST_CLOUD = 150
 # Une tâche sur laquelle on ne sait rien du modèle : ni bonne ni mauvaise note.
 UNKNOWN_SKILL = 0.4
+# Quand d'autres modèles ont des mesures publiques, une note de la grille seule (sans preuve
+# mesurée) compte un peu moins : sinon, ne pas avoir de benchmark deviendrait un avantage.
+GRID_ONLY_CONFIDENCE = 0.9
 
 
 @dataclass
@@ -100,7 +103,13 @@ def build_candidates(
                 free=card.free,
                 measured_tps=measured.avg_tokens_per_second if measured else None,
                 profile=profile_for(card.id),
-                benchmark=index.match(card.id) if index else None,
+                benchmark=(
+                    index.match(
+                        card.id, reasoning="reasoning" in card.capabilities, small=card.local
+                    )
+                    if index
+                    else None
+                ),
             )
         )
 
@@ -122,13 +131,23 @@ def build_candidates(
                     context_length=suggestion.context_length,
                     free=True,
                     profile=profile_for(suggestion.model),
-                    benchmark=index.match(suggestion.model) if index else None,
+                    benchmark=(
+                        index.match(
+                            suggestion.model,
+                            reasoning="reasoning" in suggestion.capabilities,
+                            small=True,
+                        )
+                        if index
+                        else None
+                    ),
                 )
             )
     return candidates
 
 
-def evaluate(candidate: Candidate, needs: Needs, vram_gb: float) -> Scored | None:
+def evaluate(
+    candidate: Candidate, needs: Needs, vram_gb: float, benchmarks_available: bool = False
+) -> Scored | None:
     """La note d'un modèle pour ces besoins, ou None s'il ne peut pas convenir du tout."""
     c = candidate
     # Les exigences strictes d'abord : inutile de noter un modèle qui ne peut pas faire.
@@ -146,7 +165,7 @@ def evaluate(candidate: Candidate, needs: Needs, vram_gb: float) -> Scored | Non
     warnings: list[str] = []
     skills = []
     for task in needs.tasks:
-        skill, reason = _skill(c, task)
+        skill, reason = _skill(c, task, benchmarks_available)
         skills.append(skill)
         if reason:
             reasons.append(reason)
@@ -193,11 +212,18 @@ def evaluate(candidate: Candidate, needs: Needs, vram_gb: float) -> Scored | Non
 
 
 def recommend_models(
-    needs: Needs, candidates: list[Candidate], vram_gb: float
+    needs: Needs,
+    candidates: list[Candidate],
+    vram_gb: float,
+    benchmarks_available: bool = False,
 ) -> list[tuple[Role, Scored]]:
     """Le podium : le meilleur choix, un compromis plus rapide, et une piste à explorer."""
     scored = sorted(
-        (s for c in candidates if (s := evaluate(c, needs, vram_gb)) is not None),
+        (
+            s
+            for c in candidates
+            if (s := evaluate(c, needs, vram_gb, benchmarks_available)) is not None
+        ),
         key=lambda s: s.score,
         reverse=True,
     )
@@ -227,7 +253,7 @@ def recommend_models(
     return picks
 
 
-def _skill(c: Candidate, task: str) -> tuple[float, str | None]:
+def _skill(c: Candidate, task: str, benchmarks_available: bool) -> tuple[float, str | None]:
     """L'aptitude à une tâche (de 0 à 1), et ce qui la justifie."""
     label = TASK_LABELS[task]
     grid = c.profile.strengths.get(task) if c.profile else None
@@ -238,8 +264,18 @@ def _skill(c: Candidate, task: str) -> tuple[float, str | None]:
         # Le benchmark mesure le modèle réel ; la grille corrige ce qu'il ne voit pas.
         skill = measured if grid is None else (measured + grid / 5) / 2
         percent = round(measured * 100)
-        return skill, f"{label}: better than {percent}% of the models benchmarked by {SOURCE_NAME}"
+        compared = "open models up to 35B" if c.benchmark.small else "models"
+        return (
+            skill,
+            f"{label}: better than {percent}% of the {compared} benchmarked by {SOURCE_NAME}",
+        )
     if grid is not None:
+        if metric and benchmarks_available:
+            # La tâche est mesurée publiquement, mais pas pour ce modèle : moins de preuves.
+            return (
+                grid / 5 * GRID_ONLY_CONFIDENCE,
+                f"{label}: {grid}/5 in Netherbrain's model grid (no public benchmark)",
+            )
         return grid / 5, f"{label}: {grid}/5 in Netherbrain's model grid"
     return UNKNOWN_SKILL, None
 
