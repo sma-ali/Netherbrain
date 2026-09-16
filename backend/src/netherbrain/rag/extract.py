@@ -1,4 +1,4 @@
-"""Extraire le texte d'un fichier joint : un PDF, ou n'importe quel fichier texte (code compris)."""
+"""Reconnaître un fichier joint (image, PDF, texte), et en extraire le texte."""
 
 import io
 
@@ -11,23 +11,46 @@ MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 SNIFF_BYTES = 8000
 
 
+# Les premiers octets (la « signature ») de chaque format d'image que lisent les modèles.
+IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
 class UnsupportedDocumentError(ValueError):
     """Le fichier n'est pas d'un type pris en charge, ou son contenu est illisible."""
 
 
-def content_type_for(filename: str, data: bytes) -> str:
-    """Le type du fichier, déduit de son extension et de son contenu.
+def image_type(data: bytes) -> str | None:
+    """Le type d'une image, reconnu à sa signature ; None si ce n'en est pas une.
 
-    Le type annoncé par le navigateur est peu fiable, et souvent vide pour du code. Un PDF se
-    reconnaît à son extension ; tout le reste est accepté s'il s'agit de texte UTF-8, quelle
-    que soit l'extension (Dockerfile, .py, .tsx, .csv…).
+    Jamais d'après l'extension : un fichier renommé en .png ne passe pas pour une image. Et le
+    SVG, qui peut contenir du JavaScript, n'est pas accepté.
     """
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return next((kind for signature, kind in IMAGE_SIGNATURES if data.startswith(signature)), None)
+
+
+def content_type_for(filename: str, data: bytes) -> str:
+    """Le type du fichier, déduit de son contenu et de son extension.
+
+    Le type annoncé par le navigateur est peu fiable, et souvent vide pour du code. Une image
+    se reconnaît à ses premiers octets, un PDF à son extension ; tout le reste est accepté s'il
+    s'agit de texte UTF-8, quelle que soit l'extension (Dockerfile, .py, .tsx, .csv…).
+    """
+    if image := image_type(data):
+        return image
     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if extension == ".pdf":
         return PDF
     if b"\x00" in data[:SNIFF_BYTES]:
         raise UnsupportedDocumentError(
-            f"{filename} is not a text file: attach PDFs or text files (code, Markdown, CSV…)"
+            f"{filename} is not a supported file: attach images (PNG, JPEG, WebP, GIF), PDFs "
+            "or text files (code, Markdown, CSV…)"
         )
     try:
         data.decode("utf-8")

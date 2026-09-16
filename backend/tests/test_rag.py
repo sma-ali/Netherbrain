@@ -123,9 +123,25 @@ def test_pdfs_and_any_text_file_are_accepted(filename, data, expected):
 
 
 @pytest.mark.parametrize(
+    ("filename", "data", "expected"),
+    [
+        ("capture.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "image/png"),
+        ("photo.JPG", b"\xff\xd8\xff\xe0\x00\x10JFIF", "image/jpeg"),
+        ("sticker.webp", b"RIFF\x24\x00\x00\x00WEBPVP8 ", "image/webp"),
+        ("anim.gif", b"GIF89a\x01\x00\x01\x00", "image/gif"),
+        # Le contenu décide, pas l'extension : dans les deux sens.
+        ("sans-extension", b"\x89PNG\r\n\x1a\n\x00\x00", "image/png"),
+        ("faux.png", b"juste du texte", "text/plain"),
+    ],
+)
+def test_images_are_recognized_by_their_first_bytes(filename, data, expected):
+    assert content_type_for(filename, data) == expected
+
+
+@pytest.mark.parametrize(
     ("filename", "data"),
     [
-        ("photo.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"),
+        ("archive.zip", b"PK\x03\x04\x14\x00\x00\x00"),
         ("ancien.txt", "Été".encode("latin-1")),
     ],
 )

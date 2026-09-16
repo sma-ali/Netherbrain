@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import Select, and_, delete, func, or_, select, union_all, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, undefer
 
 from netherbrain.advisor.sources import BenchmarkEntry
 from netherbrain.db.models import (
@@ -220,13 +220,17 @@ class DocumentRepository:
         content_type: str,
         size_bytes: int,
         path: str | None = None,
+        data: bytes | None = None,
     ) -> Document:
+        """Un fichier à lire en tâche de fond ; une image (`data`) est prête tout de suite."""
         document = Document(
             conversation_id=conversation_id,
             name=name,
             content_type=content_type,
             size_bytes=size_bytes,
             path=path,
+            data=data,
+            status="processing" if data is None else "ready",
         )
         self._session.add(document)
         await self._session.flush()
@@ -281,6 +285,29 @@ class DocumentRepository:
             .order_by(Document.id)
         )
         return [(path or name, content) for path, name, content in rows]
+
+    async def images(
+        self, conversation_id: uuid.UUID, attachment_ids: list[uuid.UUID]
+    ) -> Sequence[Document]:
+        """Les images envoyées dans la conversation (ou avec ce message), octets compris."""
+        result = await self._session.scalars(
+            select(Document)
+            .options(undefer(Document.data))
+            .where(_usable(conversation_id, attachment_ids), Document.data.is_not(None))
+            .order_by(Document.id)
+        )
+        return result.all()
+
+    async def image(self, conversation_id: uuid.UUID, document_id: uuid.UUID) -> Document | None:
+        return await self._session.scalar(
+            select(Document)
+            .options(undefer(Document.data))
+            .where(
+                Document.id == document_id,
+                Document.conversation_id == conversation_id,
+                Document.data.is_not(None),
+            )
+        )
 
     async def search(
         self,

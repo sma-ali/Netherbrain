@@ -9,9 +9,11 @@ from netherbrain.api.deps import build_registry
 from netherbrain.config import Settings
 from netherbrain.providers import OllamaProvider, ProviderError
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
-from netherbrain.providers.openai_compatible import describe_error
+from netherbrain.providers.ollama import native_message
+from netherbrain.providers.openai_compatible import describe_error, openai_message
 from netherbrain.schemas import (
     ChatMessage,
+    ImageInput,
     ReasoningEvent,
     TokenEvent,
     ToolCallEvent,
@@ -238,3 +240,26 @@ def test_an_answer_that_is_not_json_is_an_error():
 
     with pytest.raises(ProviderError, match="not valid JSON"):
         asyncio.run(provider.complete_json("m", [ChatMessage(role="user", content="x")], {}))
+
+
+def test_images_travel_in_the_format_of_each_api():
+    image = ImageInput(media_type="image/png", data="iVBORw0KGgo=")
+    message = ChatMessage(role="user", content="Que vois-tu ?", images=[image])
+
+    assert native_message(message) == {
+        "role": "user",
+        "content": "Que vois-tu ?",
+        "images": ["iVBORw0KGgo="],
+    }
+    assert openai_message(message) == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Que vois-tu ?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+        ],
+    }
+    # Sans image, le contenu reste un simple texte, compris par tous les fournisseurs.
+    assert openai_message(ChatMessage(role="user", content="salut")) == {
+        "role": "user",
+        "content": "salut",
+    }

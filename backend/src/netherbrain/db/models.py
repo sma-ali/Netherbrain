@@ -5,7 +5,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, false
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -146,7 +156,7 @@ class ComparisonResult(Base):
 
 
 class Document(Base):
-    """Un fichier joint à une conversation : son texte, et ses morceaux pour la recherche."""
+    """Un fichier joint à une conversation : son texte et ses morceaux, ou une image."""
 
     __tablename__ = "documents"
 
@@ -170,6 +180,9 @@ class Document(Base):
     # Le texte extrait, envoyé en entier au modèle quand il est court. « deferred » : les
     # listes de fichiers ne le chargent pas, car il peut être très long.
     content: Mapped[str | None] = mapped_column(Text, deferred=True)
+    # Les octets d'une image, que le modèle reçoit telle quelle ; None pour les autres fichiers,
+    # dont seul le texte compte. « deferred » aussi : une image pèse plusieurs Mo.
+    data: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     content_type: Mapped[str] = mapped_column(String(100))
     size_bytes: Mapped[int]
     # processing (indexation en cours), ready, ou error.

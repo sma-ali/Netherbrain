@@ -17,6 +17,25 @@ from netherbrain.schemas import (
 )
 
 
+def openai_message(message: ChatMessage) -> dict[str, Any]:
+    """Un message au format d'OpenAI. Avec des images, le contenu devient une liste de parties :
+    le texte, puis chaque image en « data URL » (son type et ses octets en base64)."""
+    # exclude_none : un `tool_call_id: null` ferait refuser la requête.
+    payload = message.model_dump(exclude_none=True, exclude={"images"})
+    if message.images:
+        payload["content"] = [
+            {"type": "text", "text": message.content},
+            *(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image.media_type};base64,{image.data}"},
+                }
+                for image in message.images
+            ),
+        ]
+    return payload
+
+
 def describe_error(exc: openai.APIError) -> str:
     """Un message d'erreur court et lisible, sans le corps JSON complet du fournisseur.
 
@@ -90,8 +109,7 @@ class OpenAICompatibleProvider:
         try:
             stream = await self._client.chat.completions.create(
                 model=model,
-                # exclude_none : un `tool_call_id: null` ferait refuser la requête.
-                messages=[message.model_dump(exclude_none=True) for message in messages],
+                messages=[openai_message(message) for message in messages],
                 stream=True,
                 stream_options={"include_usage": True},
                 **({"tools": tools} if tools else {}),
@@ -144,7 +162,7 @@ class OpenAICompatibleProvider:
         try:
             completion = await self._client.chat.completions.create(
                 model=model,
-                messages=[message.model_dump(exclude_none=True) for message in messages],
+                messages=[openai_message(message) for message in messages],
                 response_format={
                     "type": "json_schema",
                     "json_schema": {"name": "answer", "schema": schema},

@@ -7,9 +7,20 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+class ImageInput(BaseModel):
+    """Une image envoyée au modèle."""
+
+    # image/png, image/jpeg, image/webp ou image/gif.
+    media_type: str
+    # Les octets de l'image, encodés en base64 : c'est ainsi qu'elle voyage dans du JSON.
+    data: str
+
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    # Les images jointes par l'utilisateur, pour les modèles qui savent les lire.
+    images: list[ImageInput] | None = None
     # Les outils demandés par le modèle (role="assistant"), au format d'OpenAI.
     tool_calls: list[dict[str, Any]] | None = None
     # La réponse à un appel d'outil (role="tool") : l'identifiant de l'appel concerné.
@@ -27,6 +38,8 @@ class ModelInfo(BaseModel):
     provider: str
     # Sait appeler des outils : sans ça, pas de mode agent.
     tools: bool = False
+    # Sait lire des images : sans ça, impossible de lui en envoyer.
+    vision: bool = False
 
 
 class ProviderStatus(BaseModel):
@@ -196,9 +209,11 @@ class AttachmentInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    conversation_id: uuid.UUID | None = None
     name: str
     # Chemin dans le dossier joint (« app/src/main.py ») ; None pour un fichier joint seul.
     path: str | None = None
+    # Une image (image/png…) s'affiche, et part telle quelle aux modèles qui savent la lire.
     content_type: str
     size_bytes: int
     # processing : lecture en cours ; ready : utilisable ; error : voir `error`.

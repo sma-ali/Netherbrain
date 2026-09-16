@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Fichiers joints au chat : tant que leur texte tient dans ce nombre de caractères (au
     # total), le modèle les reçoit en entier ; au-delà, seulement les passages utiles.
     attachment_inline_chars: int = 32_000
+    # Images jointes : seules les plus récentes partent au modèle à chaque message, car
+    # chacune coûte des centaines de tokens (et le modèle relit tout l'historique).
+    max_images_sent: int = 8
 
     # --- Conseiller de modèles ---
     # Clé de l'API gratuite d'Artificial Analysis (https://artificialanalysis.ai/) : des

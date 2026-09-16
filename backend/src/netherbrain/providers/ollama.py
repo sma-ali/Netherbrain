@@ -188,8 +188,11 @@ class OllamaProvider(OpenAICompatibleProvider):
 
 
 def native_message(message: ChatMessage) -> dict[str, Any]:
-    """Un message au format d'Ollama : les arguments d'outils y sont des objets, pas du texte."""
+    """Un message au format d'Ollama : les arguments d'outils y sont des objets, pas du texte,
+    et les images une simple liste de base64."""
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.images:
+        payload["images"] = [image.data for image in message.images]
     if message.tool_calls:
         payload["tool_calls"] = [
             {

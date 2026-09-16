@@ -1,5 +1,6 @@
 """Routes des conversations enregistrées : lister, créer, lire, supprimer, discuter."""
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -39,6 +40,7 @@ from netherbrain.db.repository import (
 from netherbrain.projects.prompt import build_project_context
 from netherbrain.projects.workspace import Workspace
 from netherbrain.rag.context import attachment_context
+from netherbrain.rag.images import add_images, can_read_images
 from netherbrain.schemas import (
     ApprovalRequest,
     ChatMessage,
@@ -151,10 +153,30 @@ async def send_message(
     documents = DocumentRepository(session)
     await check_attachments(documents, conversation_id, request.attachment_ids)
 
-    history = [
-        ChatMessage(role=m.role, content=m.content) for m in conversation.messages if m.content
-    ]
+    past = [m for m in conversation.messages if m.content]
+    history = [ChatMessage(role=m.role, content=m.content) for m in past]
     history.append(ChatMessage(role="user", content=request.content))
+
+    # Les images partent avec le message qui les a envoyées, si le modèle sait les lire.
+    if images := await documents.images(conversation_id, request.attachment_ids):
+        try:
+            async with asyncio.timeout(settings.provider_list_timeout):
+                vision = await can_read_images(provider, request.model)
+        except TimeoutError:
+            vision = None
+        if vision is False and any(image.message_id is None for image in images):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{request.model} cannot read images: pick a model that can, or remove them",
+            )
+        add_images(
+            history,
+            [m.id for m in past] + [None],
+            images,
+            limit=settings.max_images_sent,
+            # Sans réponse du fournisseur, on tente : il refusera lui-même s'il ne sait pas.
+            vision=vision is not False,
+        )
 
     project = await project_of(session, conversation, workspace)
     if request.agent and project is None:

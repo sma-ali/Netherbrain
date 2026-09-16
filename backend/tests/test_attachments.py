@@ -1,5 +1,6 @@
 """Les fichiers joints au chat : les joindre, les lire, et ce que le modèle en reçoit."""
 
+import base64
 import uuid
 
 import pytest
@@ -10,12 +11,15 @@ from netherbrain.config import Settings, get_settings
 from netherbrain.db.models import Document, DocumentChunk
 from netherbrain.db.repository import DocumentRepository
 from netherbrain.main import app
-from netherbrain.schemas import TokenEvent
+from netherbrain.schemas import ImageInput, TokenEvent
 
 MISSING_ID = "01a09034-355e-71a4-8403-8a1b1710aa0f"
 SECRET = "Le mot de passe du coffre est licorne. Il ne faut le dire à personne."
 RECIPE = "Pour la tarte aux pommes, il faut des pommes, du beurre et de la farine."
 QUESTION = "Quel est le mot de passe du coffre ?"
+# Assez pour être reconnues comme des images : seuls les premiers octets comptent.
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR une capture"
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF une photo"
 
 
 def use_settings(**overrides) -> None:
@@ -39,12 +43,12 @@ def attachments(client, conversation_id: str) -> list[dict]:
     return client.get(f"/api/conversations/{conversation_id}/attachments").json()
 
 
-def send(client, conversation_id: str, content: str = QUESTION, attachment_ids=()):
+def send(client, conversation_id: str, content: str = QUESTION, attachment_ids=(), provider="fake"):
     return client.post(
         f"/api/conversations/{conversation_id}/messages",
         json={
-            "provider": "fake",
-            "model": "fake-model",
+            "provider": provider,
+            "model": f"{provider}-model",
             "content": content,
             "attachment_ids": list(attachment_ids),
         },
@@ -100,7 +104,7 @@ def test_binary_files_are_refused(client, use_embedder):
     use_embedder(FakeEmbedder())
     conversation_id = new_conversation(client)
 
-    response = attach(client, conversation_id, "photo.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00")
+    response = attach(client, conversation_id, "archive.zip", b"PK\x03\x04\x14\x00\x00\x00")
 
     assert response.status_code == 415
     assert attachments(client, conversation_id) == []
@@ -288,3 +292,111 @@ def test_a_file_still_being_read_cannot_be_sent(client, use_providers):
 
     assert response.status_code == 409
     assert "lent.pdf" in response.json()["detail"]
+
+
+# --- Images ---
+
+
+def image_url(conversation_id: str, attachment_id: str) -> str:
+    return f"/api/conversations/{conversation_id}/attachments/{attachment_id}/content"
+
+
+def test_an_image_is_kept_as_is_and_ready_at_once(client, use_embedder):
+    use_embedder(FakeEmbedder())
+    conversation_id = new_conversation(client)
+
+    response = attach(client, conversation_id, "capture.png", PNG)
+
+    assert response.status_code == 202
+    image = response.json()
+    assert (image["content_type"], image["status"], image["chunk_count"]) == (
+        "image/png",
+        "ready",
+        0,
+    )
+    content = client.get(image_url(conversation_id, image["id"]))
+    assert content.status_code == 200
+    assert content.content == PNG
+    assert content.headers["content-type"] == "image/png"
+    assert "immutable" in content.headers["cache-control"]
+
+
+def test_only_images_of_the_conversation_can_be_displayed(client, use_embedder):
+    use_embedder(FakeEmbedder())
+    conversation_id = new_conversation(client)
+    text_id = attach(client, conversation_id, "secret.txt", SECRET).json()["id"]
+    image_id = attach(client, conversation_id, "capture.png", PNG).json()["id"]
+
+    assert client.get(image_url(conversation_id, text_id)).status_code == 404
+    assert client.get(image_url(new_conversation(client), image_id)).status_code == 404
+
+
+def test_images_are_sent_to_a_model_that_can_read_them(client, use_providers, use_embedder):
+    use_embedder(FakeEmbedder())
+    provider = FakeProvider(capabilities=["vision"], events=[TokenEvent(content="Un chat.")])
+    use_providers(provider)
+    conversation_id = new_conversation(client)
+    image_id = attach(client, conversation_id, "chat.png", PNG).json()["id"]
+
+    response = send(client, conversation_id, "Que vois-tu ?", attachment_ids=[image_id])
+
+    assert response.status_code == 200
+    # Pas de message système : une image n'a pas de texte à ajouter au contexte.
+    [question] = provider.received
+    assert question.images == [
+        ImageInput(media_type="image/png", data=base64.b64encode(PNG).decode())
+    ]
+    user, _ = client.get(f"/api/conversations/{conversation_id}").json()["messages"]
+    assert [a["content_type"] for a in user["attachments"]] == ["image/png"]
+
+
+def test_a_model_that_cannot_read_images_is_not_sent_any(client, use_providers, use_embedder):
+    use_embedder(FakeEmbedder())
+    provider = FakeProvider(events=[TokenEvent(content="?")])
+    use_providers(provider)
+    conversation_id = new_conversation(client)
+    image_id = attach(client, conversation_id, "chat.png", PNG).json()["id"]
+
+    response = send(client, conversation_id, "Que vois-tu ?", attachment_ids=[image_id])
+
+    assert response.status_code == 422
+    assert "fake-model cannot read images" in response.json()["detail"]
+    assert provider.received == []
+    assert client.get(f"/api/conversations/{conversation_id}").json()["messages"] == []
+
+
+def test_earlier_images_are_only_mentioned_to_a_model_without_vision(
+    client, use_providers, use_embedder
+):
+    use_embedder(FakeEmbedder())
+    eyes = FakeProvider("eyes", capabilities=["vision"], events=[TokenEvent(content="Un chat.")])
+    blind = FakeProvider("blind", events=[TokenEvent(content="D'accord.")])
+    use_providers(eyes, blind)
+    conversation_id = new_conversation(client)
+    image_id = attach(client, conversation_id, "chat.png", PNG).json()["id"]
+    send(client, conversation_id, "Que vois-tu ?", attachment_ids=[image_id], provider="eyes")
+
+    response = send(client, conversation_id, "Écris-en un poème", provider="blind")
+
+    assert response.status_code == 200
+    first, _, _ = blind.received
+    assert first.images is None
+    assert first.content == "Que vois-tu ?\n\n[Image chat.png: not shown to you]"
+
+
+def test_only_the_most_recent_images_are_sent(client, use_providers, use_embedder):
+    use_embedder(FakeEmbedder())
+    use_settings(max_images_sent=1)
+    provider = FakeProvider(capabilities=["vision"], events=[TokenEvent(content="ok")])
+    use_providers(provider)
+    conversation_id = new_conversation(client)
+    before = attach(client, conversation_id, "avant.png", PNG).json()["id"]
+    send(client, conversation_id, "Voici la première", attachment_ids=[before])
+    after = attach(client, conversation_id, "apres.jpg", JPEG).json()["id"]
+
+    send(client, conversation_id, "Et la seconde", attachment_ids=[after])
+
+    old, _, new = provider.received
+    assert old.images is None
+    assert "[Image avant.png: not shown to you]" in old.content
+    assert [image.media_type for image in new.images] == ["image/jpeg"]
