@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, false
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -211,3 +211,24 @@ class DocumentChunk(Base):
     embedding: Mapped[list[float]] = mapped_column(
         Vector(EMBEDDING_DIMENSIONS).with_variant(JSON(), "sqlite")
     )
+
+
+class ModelBenchmark(Base):
+    """Les scores d'un modèle dans un benchmark public, récupérés en ligne (conseiller)."""
+
+    __tablename__ = "model_benchmarks"
+    __table_args__ = (
+        UniqueConstraint("source", "source_id", name="uq_model_benchmarks_source_source_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    # La source (« artificial_analysis »), et l'identifiant du modèle chez elle.
+    source: Mapped[str] = mapped_column(String(64))
+    source_id: Mapped[str] = mapped_column(String(128))
+    name: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[str] = mapped_column(String(255))
+    creator: Mapped[str | None] = mapped_column(String(255))
+    # Les indices (intelligence, coding, math) et la vitesse : un champ JSON, car chaque
+    # source publie ses propres mesures.
+    scores: Mapped[dict[str, Any]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

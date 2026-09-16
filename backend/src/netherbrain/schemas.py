@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ChatMessage(BaseModel):
@@ -78,6 +78,86 @@ class CatalogResponse(BaseModel):
     providers: list[ProviderStatus]
     # False si la base est indisponible : les fiches s'affichent quand même, sans les mesures.
     stats_available: bool = True
+
+
+# --- Conseiller de modèles ---
+
+# code : programmation ; reasoning : maths, logique ; writing : rédaction ; summary : longs
+# documents ; chat : assistant généraliste ; vision : images ; agent : agit avec des outils ;
+# multilingual : répond dans une autre langue que l'anglais.
+Task = Literal["code", "reasoning", "writing", "summary", "chat", "vision", "agent", "multilingual"]
+Requirement = Literal["vision", "tools", "long_context"]
+
+
+class Needs(BaseModel):
+    """Ce que la demande de l'utilisateur exige d'un modèle."""
+
+    tasks: list[Task] = Field(min_length=1, max_length=3)
+    requires: list[Requirement] = Field(default_factory=list)
+    priority: Literal["quality", "balanced", "speed"] = "balanced"
+    local_only: bool = False
+
+    @field_validator("tasks", "requires", mode="before")
+    @classmethod
+    def without_duplicates(cls, value: Any) -> Any:
+        # Un LLM répète parfois une tâche : on dédoublonne, et on garde les trois premières.
+        return list(dict.fromkeys(value))[:3] if isinstance(value, list) else value
+
+    @model_validator(mode="after")
+    def implied_requirements(self) -> Self:
+        # Certaines tâches supposent une capacité, qu'un LLM oublie parfois d'exiger : le code
+        # la rajoute, pour ne jamais proposer un modèle incapable de faire la tâche.
+        for task, requirement in (("vision", "vision"), ("agent", "tools")):
+            if task in self.tasks and requirement not in self.requires:
+                self.requires.append(requirement)
+        return self
+
+
+class RecommendRequest(BaseModel):
+    query: str = Field(min_length=3, max_length=1000)
+    # False : lecture par mots-clés, instantanée. L'interface s'en sert pour afficher un premier
+    # podium tout de suite, avant la lecture par un LLM, plus fine mais plus lente.
+    understand: bool = True
+
+
+class ModelPick(BaseModel):
+    """Un modèle recommandé, et ce qui justifie ce choix."""
+
+    # best : le meilleur choix ; fastest : presque aussi bon, mais plus rapide ;
+    # download : meilleur que ce qui est installé ; cloud : une alternative distante.
+    role: Literal["best", "fastest", "download", "cloud"]
+    # None pour un modèle pas encore installé.
+    provider: str | None = None
+    model: str
+    local: bool
+    # Utilisable tout de suite : installé, ou chez un fournisseur distant disponible.
+    ready: bool
+    score: float
+    reasons: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    pull_command: str | None = None
+    # Le modèle retrouvé dans les benchmarks en ligne, s'il y en a un.
+    benchmark: str | None = None
+
+
+class BenchmarksStatus(BaseModel):
+    source: str
+    url: str
+    # False sans clé d'API : le conseiller n'utilise alors que la grille écrite à la main.
+    configured: bool
+    models: int = 0
+    fetched_at: datetime | None = None
+    error: str | None = None
+
+
+class Recommendation(BaseModel):
+    query: str
+    needs: Needs
+    # Le modèle qui a compris la demande, ou « keywords » s'il a fallu s'en passer.
+    understood_by: str
+    picks: list[ModelPick]
+    benchmarks: BenchmarksStatus
+    warnings: list[str] = Field(default_factory=list)
 
 
 # --- Conversations enregistrées ---

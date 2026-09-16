@@ -13,6 +13,7 @@ from fastapi import Depends, HTTPException
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from netherbrain.advisor.sources import ArtificialAnalysisClient
 from netherbrain.agent.approvals import ApprovalRegistry
 from netherbrain.config import Settings, get_settings
 from netherbrain.db.models import EMBEDDING_DIMENSIONS
@@ -149,3 +150,18 @@ def get_approvals() -> ApprovalRegistry:
 
 
 ApprovalsDep = Annotated[ApprovalRegistry, Depends(get_approvals)]
+
+
+# --- Conseiller de modèles ---
+
+
+@lru_cache
+def get_benchmarks_client() -> ArtificialAnalysisClient | None:
+    """Le client des benchmarks en ligne, ou None sans clé d'API (grille seule)."""
+    settings = get_settings()
+    if key := _secret(settings.artificial_analysis_api_key):
+        return ArtificialAnalysisClient(key, settings.artificial_analysis_base_url)
+    return None
+
+
+BenchmarksClientDep = Annotated[ArtificialAnalysisClient | None, Depends(get_benchmarks_client)]

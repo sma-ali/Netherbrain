@@ -2,12 +2,14 @@
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Select, and_, delete, func, or_, select, union_all, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from netherbrain.advisor.sources import BenchmarkEntry
 from netherbrain.db.models import (
     Comparison,
     ComparisonResult,
@@ -15,6 +17,7 @@ from netherbrain.db.models import (
     Document,
     DocumentChunk,
     Message,
+    ModelBenchmark,
     Project,
     utcnow,
 )
@@ -381,3 +384,52 @@ async def model_stats(session: AsyncSession) -> dict[tuple[str, str], ModelStats
         )
         for provider, model, count, ttft, tps in rows
     }
+
+
+class BenchmarkRepository:
+    """Les benchmarks publics gardés en base, remplacés d'un bloc à chaque mise à jour."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def replace(self, source: str, entries: list[BenchmarkEntry]) -> None:
+        await self._session.execute(delete(ModelBenchmark).where(ModelBenchmark.source == source))
+        now = utcnow()
+        # Un même identifiant deux fois violerait la contrainte d'unicité : on dédoublonne.
+        unique = {entry.source_id: entry for entry in entries}
+        self._session.add_all(
+            ModelBenchmark(
+                source=source,
+                source_id=entry.source_id[:128],
+                name=entry.name[:255],
+                slug=entry.slug[:255],
+                creator=entry.creator[:255] if entry.creator else None,
+                scores=entry.scores(),
+                fetched_at=now,
+            )
+            for entry in unique.values()
+        )
+        await self._session.flush()
+
+    async def entries(self, source: str) -> list[BenchmarkEntry]:
+        rows = await self._session.scalars(
+            select(ModelBenchmark).where(ModelBenchmark.source == source)
+        )
+        return [
+            BenchmarkEntry(
+                source_id=row.source_id,
+                name=row.name,
+                slug=row.slug,
+                creator=row.creator,
+                intelligence=row.scores.get("intelligence"),
+                coding=row.scores.get("coding"),
+                math=row.scores.get("math"),
+                output_speed=row.scores.get("output_speed"),
+            )
+            for row in rows
+        ]
+
+    async def fetched_at(self, source: str) -> datetime | None:
+        return await self._session.scalar(
+            select(func.max(ModelBenchmark.fetched_at)).where(ModelBenchmark.source == source)
+        )

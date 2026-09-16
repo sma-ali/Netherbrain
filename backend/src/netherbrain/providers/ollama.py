@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from netherbrain.providers.base import ProviderError
+from netherbrain.providers.base import ProviderError, parse_json_object
 from netherbrain.providers.catalog import card_from_ollama
 from netherbrain.providers.openai_compatible import OpenAICompatibleProvider
 from netherbrain.schemas import (
@@ -106,6 +106,59 @@ class OllamaProvider(OpenAICompatibleProvider):
             ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"{self.name}: {str(exc) or type(exc).__name__}") from exc
+
+    async def loaded_models(self) -> list[str]:
+        """Les modèles chargés en VRAM en ce moment (GET /api/ps) ; vide en cas d'erreur."""
+        try:
+            async with httpx.AsyncClient(timeout=3, transport=self._transport) as client:
+                response = await client.get(f"{self._native_url}/api/ps")
+                response.raise_for_status()
+                return [model["name"] for model in response.json().get("models", [])]
+        except httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError:
+            return []
+
+    async def complete_json(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        schema: dict[str, Any],
+        *,
+        think: bool | None = None,
+    ) -> dict[str, Any]:
+        """Sortie structurée d'Ollama : `format` reçoit le schéma JSON, qu'il fait respecter.
+
+        Ollama contraint la génération token par token : la réponse est forcément du JSON
+        conforme. `think=False` coupe la réflexion des modèles qui raisonnent (plus rapide).
+        """
+        # Le même contexte que pour discuter : un autre ferait recharger le modèle en VRAM.
+        options: dict[str, Any] = {"temperature": 0}
+        if self._context_length:
+            options["num_ctx"] = self._context_length
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [native_message(message) for message in messages],
+            "stream": False,
+            "format": schema,
+            "options": options,
+        }
+        if think is not None:
+            payload["think"] = think
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._chat_timeout, transport=self._transport
+            ) as client:
+                response = await client.post(f"{self._native_url}/api/chat", json=payload)
+        except httpx.ConnectError as exc:
+            raise ProviderError(
+                f"{self.name}: not running (cannot reach {self._native_url})"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"{self.name}: {str(exc) or type(exc).__name__}") from exc
+        if response.status_code >= 400:
+            raise ProviderError(f"{self.name}: HTTP {response.status_code}: {response.text[:200]}")
+        message = response.json().get("message") or {}
+        return parse_json_object(self.name, message.get("content") or "")
 
 
 def native_message(message: ChatMessage) -> dict[str, Any]:

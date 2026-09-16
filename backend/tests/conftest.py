@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 from netherbrain.agent.approvals import ApprovalRegistry
 from netherbrain.api.deps import (
     get_approvals,
+    get_benchmarks_client,
     get_embedder,
     get_registry,
     get_session_factory,
@@ -46,6 +47,7 @@ class FakeProvider:
         list_delay: float = 0.0,
         local: bool = False,
         capabilities: list[str] | None = None,
+        json_reply: dict | None = None,
     ) -> None:
         self.name = name
         self.local = local
@@ -60,6 +62,9 @@ class FakeProvider:
         # Les historiques envoyés au modèle, un par appel (utile en mode agent).
         self.histories: list[list[ChatMessage]] = []
         self.tools: list[dict] | None = None
+        # La réponse aux demandes de sortie structurée ; None : le fournisseur échoue.
+        self.json_reply = json_reply
+        self.json_requests: list[tuple[str, list[ChatMessage], dict, bool | None]] = []
 
     async def list_models(self) -> list[str]:
         if self.list_delay:
@@ -91,6 +96,14 @@ class FakeProvider:
             yield scripted
         if self.fail:
             raise ProviderError(f"{self.name}: connection lost")
+
+    async def complete_json(
+        self, model: str, messages: list[ChatMessage], schema: dict, *, think: bool | None = None
+    ) -> dict:
+        self.json_requests.append((model, messages, schema, think))
+        if self.json_reply is None:
+            raise ProviderError(f"{self.name}: no structured output")
+        return self.json_reply
 
 
 class FakeEmbedder:
@@ -160,6 +173,8 @@ def client() -> Iterator[TestClient]:
     engine = make_test_engine(TEST_DATABASE_URL)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     app.dependency_overrides[get_session_factory] = lambda: factory
+    # Jamais d'appel aux benchmarks en ligne pendant les tests, même avec une clé dans le .env.
+    app.dependency_overrides[get_benchmarks_client] = lambda: None
 
     # Le « with » démarre la boucle d'événements de l'application : la base est créée dedans.
     with TestClient(app) as test_client:

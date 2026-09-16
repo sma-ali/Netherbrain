@@ -4,7 +4,7 @@ from typing import Any
 import openai
 from openai import AsyncOpenAI
 
-from netherbrain.providers.base import ProviderError
+from netherbrain.providers.base import ProviderError, parse_json_object
 from netherbrain.providers.catalog import card_from_openai_compatible
 from netherbrain.schemas import (
     ChatMessage,
@@ -128,3 +128,30 @@ class OpenAICompatibleProvider:
             yield ToolCallEvent(
                 id=call["id"] or f"call_{index}", name=call["name"], arguments=call["arguments"]
             )
+
+    async def complete_json(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        schema: dict[str, Any],
+        *,
+        think: bool | None = None,
+    ) -> dict[str, Any]:
+        """Sortie structurée via `response_format` (pas tous les modèles la prennent en charge).
+
+        `think` n'a pas d'équivalent standard dans l'API d'OpenAI : il est ignoré ici.
+        """
+        try:
+            completion = await self._client.chat.completions.create(
+                model=model,
+                messages=[message.model_dump(exclude_none=True) for message in messages],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "answer", "schema": schema},
+                },
+                temperature=0,
+            )
+        except openai.APIError as exc:
+            raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc
+        content = completion.choices[0].message.content if completion.choices else None
+        return parse_json_object(self.name, content or "")

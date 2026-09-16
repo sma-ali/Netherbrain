@@ -200,3 +200,41 @@ def test_an_unreachable_ollama_is_reported():
 
     with pytest.raises(ProviderError, match="not running"):
         collect(provider.stream_chat("m", [ChatMessage(role="user", content="salut")]))
+
+
+# --- Sortie structurée ---
+
+
+def test_ollama_structured_output_follows_the_schema():
+    sent = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"message": {"role": "assistant", "content": '{"tasks": ["code"]}'}}
+        )
+
+    provider = OllamaProvider(
+        "http://ollama.test:11434/v1", context_length=8192, transport=httpx.MockTransport(handler)
+    )
+    schema = {"type": "object"}
+
+    answer = asyncio.run(
+        provider.complete_json(
+            "m", [ChatMessage(role="user", content="salut")], schema, think=False
+        )
+    )
+
+    assert answer == {"tasks": ["code"]}
+    assert (sent[0]["format"], sent[0]["stream"], sent[0]["think"]) == (schema, False, False)
+    assert sent[0]["options"] == {"temperature": 0, "num_ctx": 8192}
+
+
+def test_an_answer_that_is_not_json_is_an_error():
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"message": {"content": "pas du json"}})
+    )
+    provider = OllamaProvider("http://ollama.test:11434/v1", transport=transport)
+
+    with pytest.raises(ProviderError, match="not valid JSON"):
+        asyncio.run(provider.complete_json("m", [ChatMessage(role="user", content="x")], {}))

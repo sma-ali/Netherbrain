@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     # total), le modèle les reçoit en entier ; au-delà, seulement les passages utiles.
     attachment_inline_chars: int = 32_000
 
+    # --- Conseiller de modèles ---
+    # Clé de l'API gratuite d'Artificial Analysis (https://artificialanalysis.ai/) : des
+    # benchmarks publics mis à jour en continu. Sans elle, seule la grille écrite à la main sert.
+    artificial_analysis_api_key: SecretStr | None = None
+    artificial_analysis_base_url: str = "https://artificialanalysis.ai/api/v2"
+    # Âge au-delà duquel on redemande les benchmarks (l'API limite à 1 000 requêtes par jour).
+    benchmarks_max_age_hours: float = 24
+    # Le modèle qui lit la demande, « fournisseur/modèle » ; vide : un modèle local choisi seul.
+    advisor_model: str | None = None
+    advisor_timeout: float = 60
+    # La VRAM de la carte graphique, pour savoir quels modèles locaux y tiennent.
+    gpu_vram_gb: float = 16
+
     # --- Projets ---
     # Le dossier de travail : chaque projet est l'un de ses sous-dossiers, et l'application
     # n'accède jamais à rien en dehors. Dans Docker, c'est le dossier monté sur /workspace.
