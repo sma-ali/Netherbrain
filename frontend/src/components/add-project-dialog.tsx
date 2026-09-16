@@ -81,12 +81,15 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
       <DialogHeader>
         <DialogTitle>Add a project</DialogTitle>
         <DialogDescription>
-          Pick a folder in your workspace. Its conversations will know the project and follow
-          its AGENTS.md or CLAUDE.md.
+          Pick a folder in your workspace, the only place the agent can reach. Its conversations
+          will know the project and follow its AGENTS.md or CLAUDE.md.
         </DialogDescription>
       </DialogHeader>
 
-      <nav aria-label="Folder path" className="flex flex-wrap items-center gap-0.5 font-mono text-xs">
+      <nav
+        aria-label="Folder path"
+        className="flex flex-wrap items-center gap-0.5 font-mono text-xs"
+      >
         <Crumb onClick={() => navigate("")} current={path === ""}>
           {listing ? basename(listing.root) : "workspace"}
         </Crumb>
@@ -109,7 +112,11 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
             Loading…
           </p>
         ) : listing.directories.length === 0 ? (
-          <p className="p-3 text-muted-foreground">No subfolders.</p>
+          <p className="p-3 text-muted-foreground">
+            {path === ""
+              ? "Your workspace is empty. Create a folder in it on your computer, put the files the agent may change inside, then come back."
+              : "No subfolders."}
+          </p>
         ) : (
           <ul className="p-1">
             {listing.directories.map((folder) => (
