@@ -1,6 +1,6 @@
 "use client"
 
-import { Eye } from "lucide-react"
+import { Eye, Wrench } from "lucide-react"
 import { Fragment } from "react"
 
 import {
@@ -73,12 +73,15 @@ export function ModelPicker({
                 .map((model) => (
                   <SelectItem key={modelKey(model)} value={modelKey(model)}>
                     <span className="font-mono text-xs">{model.id}</span>
-                    {model.vision && (
-                      <Eye
-                        className="ml-auto size-3.5 self-center text-muted-foreground"
-                        aria-label="Reads images"
-                      />
-                    )}
+                    <span className="ml-auto flex gap-1.5 self-center text-muted-foreground">
+                      {model.tools && (
+                        <Wrench
+                          className="size-3.5"
+                          aria-label="Can use tools: works as an agent"
+                        />
+                      )}
+                      {model.vision && <Eye className="size-3.5" aria-label="Reads images" />}
+                    </span>
                   </SelectItem>
                 ))}
             </SelectGroup>

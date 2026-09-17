@@ -61,6 +61,14 @@ export function isIgnored(path: string): boolean {
   return path.split("/").some((part) => part.startsWith(".") || IGNORED_FOLDERS.has(part))
 }
 
+/**
+ * Un dossier trop gros pour être joint en entier (`total` : ses fichiers avant tri, quand on
+ * les connaît). Mieux vaut alors en faire un projet, que l'agent lit sans rien importer.
+ */
+export function isLargeFolder(picked: PickedFile[], total: number = picked.length): boolean {
+  return total > MAX_FILES || picked.length >= MAX_FILES
+}
+
 /** Les fichiers choisis avec « Add a folder » : leur chemin est dans `webkitRelativePath`. */
 export function filesFromFolderInput(files: FileList | File[]): PickedFile[] {
   return Array.from(files)

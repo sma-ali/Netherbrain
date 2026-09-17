@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react"
 import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AppNav } from "@/components/app-nav"
 import { AttachmentChips } from "@/components/attachment-chips"
-import { Composer } from "@/components/composer"
+import { Composer, ComposerNotice } from "@/components/composer"
 import { ConversationTree } from "@/components/conversation-tree"
 import { Message } from "@/components/message"
 import { ModelPicker } from "@/components/model-picker"
@@ -15,6 +15,7 @@ import { Sidebar } from "@/components/sidebar"
 import { Button } from "@/components/ui/button"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useChat } from "@/hooks/use-chat"
+import { useModelMemory } from "@/hooks/use-model-memory"
 import { useModels } from "@/hooks/use-models"
 import { useSavedList } from "@/hooks/use-saved-list"
 import {
@@ -27,7 +28,8 @@ import {
   type Project,
   type ProviderStatus,
 } from "@/lib/api"
-import { filesFromDrop, imageBlocker, type PickedFile } from "@/lib/attachments"
+import { filesFromDrop, imageBlocker, isLargeFolder, type PickedFile } from "@/lib/attachments"
+import { defaultModel, rememberPick } from "@/lib/models"
 import { cn } from "@/lib/utils"
 
 export function Chat() {
@@ -56,13 +58,26 @@ export function Chat() {
   const attachments = useAttachments()
   const canAttach = conversations.status !== "error"
   const [dragging, setDragging] = useState(false)
+  // Un dossier joint trop gros : on propose d'en faire un projet.
+  const [largeFolder, setLargeFolder] = useState(false)
 
   const searchParams = useSearchParams()
-  // Le catalogue peut présélectionner un modèle via l'URL : /?model=ollama/qwen3:8b
+  // Le modèle choisi pour cette conversation ; null : celui proposé par défaut. Le catalogue
+  // peut en présélectionner un via l'URL : /?model=ollama/qwen3:8b
   const [selectedKey, setSelectedKey] = useState<string | null>(() => searchParams.get("model"))
-  // État dérivé : on prend le premier modèle (les locaux sont en tête) tant que l'utilisateur
-  // n'en a pas choisi un.
-  const model = models.models.find((m) => modelKey(m) === selectedKey) ?? models.models[0] ?? null
+  const { memory, remember } = useModelMemory()
+  // Dans un projet, l'agent est possible : le modèle par défaut doit savoir utiliser des outils.
+  const agentContext = project !== null && project.available && conversations.status !== "error"
+  // État dérivé : le modèle choisi, sinon le dernier retenu pour cet usage, sinon un modèle capable.
+  const model =
+    models.models.find((m) => modelKey(m) === selectedKey) ??
+    defaultModel(models.models, agentContext, memory)
+
+  const pickModel = (key: string) => {
+    setSelectedKey(key)
+    const picked = models.models.find((m) => modelKey(m) === key)
+    if (picked) remember(rememberPick(memory, picked, agentContext))
+  }
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -78,20 +93,28 @@ export function Chat() {
     if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
   }
 
+  // Changer de conversation remet le modèle proposé par défaut pour ce nouveau contexte :
+  // un modèle sans outils choisi pour discuter ne suit pas dans un projet.
   const openConversation = (conversation: ConversationSummary) => {
     setProjectId(conversation.project_id)
+    setSelectedKey(null)
+    setLargeFolder(false)
     attachments.clear()
     open(conversation.id)
   }
 
   const newChat = (inProject: string | null) => {
     setProjectId(inProject)
+    setSelectedKey(null)
+    setLargeFolder(false)
     attachments.clear()
     reset()
   }
 
-  const attach = (picked: PickedFile[]) => {
-    if (canAttach) void attachments.add(picked, () => ensureConversation(projectId))
+  const attach = (picked: PickedFile[], total?: number) => {
+    if (!canAttach) return
+    if (isLargeFolder(picked, total)) setLargeFolder(true)
+    void attachments.add(picked, () => ensureConversation(projectId))
   }
 
   // Glisser-déposer : des fichiers ou des dossiers entiers, n'importe où sur la conversation.
@@ -160,10 +183,64 @@ export function Chat() {
         ? "The model can read, search and change the project's files, asking you first"
         : "Let the model read, search and change the project's files"
 
+  // Dans un projet, avec un modèle sans outils : dire pourquoi l'agent est impossible, et
+  // proposer d'un clic le modèle capable qu'on aurait eu par défaut.
+  const capable =
+    agentContext && model && !model.tools ? defaultModel(models.models, true, memory) : null
+  const notices = (
+    <>
+      {project && model && agentContext && !model.tools && (
+        <ComposerNotice
+          tone="warning"
+          action={
+            capable?.tools && (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => pickModel(modelKey(capable))}
+              >
+                Use {capable.id}
+              </Button>
+            )
+          }
+        >
+          {model.id} can&apos;t use tools: it can&apos;t read or change the files of {project.name}.
+        </ComposerNotice>
+      )}
+      {project && attachments.items.length > 0 && (
+        <ComposerNotice>
+          Attached files are read-only copies. To let the agent change a file, put it in the
+          project&apos;s folder.
+        </ComposerNotice>
+      )}
+      {largeFolder && (
+        <ComposerNotice
+          tone="warning"
+          onDismiss={() => setLargeFolder(false)}
+          action={
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => setAddingProject(true)}
+            >
+              Add a project
+            </Button>
+          }
+        >
+          Big folder: only part of it was attached, as read-only copies. To let the agent read and
+          change a whole codebase, add it as a project instead: nothing is imported.
+        </ComposerNotice>
+      )}
+    </>
+  )
+
   const handleSend = (text: string) => {
     if (!model) return
     void send(text, model, { projectId, agent: agentOn, attachments: attachments.ready })
     attachments.clear()
+    setLargeFolder(false)
   }
 
   return (
@@ -199,7 +276,7 @@ export function Chat() {
             <Upload className="size-8 text-primary" />
             <p className="font-medium">Drop files or folders to attach them</p>
             <p className="text-xs text-muted-foreground">
-              Images, PDFs and any text file: code, Markdown, CSV…
+              Read-only copies of images, PDFs and any text file: code, Markdown, CSV…
             </p>
           </div>
         )}
@@ -212,7 +289,7 @@ export function Chat() {
               models={models.models}
               providers={models.providers}
               value={model ? modelKey(model) : null}
-              onChange={setSelectedKey}
+              onChange={pickModel}
               loading={models.status === "loading"}
               disabled={streaming}
             />
@@ -261,6 +338,7 @@ export function Chat() {
             disabled={!model}
             busy={attachments.busy}
             blocked={imageBlocker(attachments.items, model, models.models)}
+            notices={notices}
             onAttach={canAttach ? attach : undefined}
             attachments={
               attachments.items.length > 0 ? (
