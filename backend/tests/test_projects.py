@@ -249,3 +249,11 @@ def test_a_detached_head_shows_the_commit(tmp_path):
 
     assert git_branch(tmp_path) == "0123456"
     assert git_branch(tmp_path / "not-a-repo") is None
+
+
+def test_without_tools_the_model_must_not_pretend_to_change_files(tmp_path):
+    context = build_project_context("essais", tmp_path, agent=False)
+
+    assert "You cannot open or change the project's files" in context
+    assert "Never pretend you changed a file" in context
+    assert "Read before you write" not in context

@@ -9,6 +9,15 @@ from netherbrain.projects.workspace import instructions_file
 MAX_ENTRIES = 100
 MAX_INSTRUCTIONS_CHARS = 20_000
 
+# Sans outils, le modèle ne voit que la racine du dossier : il doit le dire, plutôt que
+# d'inventer le contenu d'un fichier ou de prétendre l'avoir modifié.
+WITHOUT_TOOLS = (
+    "You cannot open or change the project's files in this conversation. When you need to see "
+    "some code, ask the user to paste it. If the user asks you to change files, say that you "
+    "cannot, and that Agent mode, with a model that can use tools, can do it. Never pretend "
+    "you changed a file."
+)
+
 
 def list_root(folder: Path) -> str:
     """Le contenu de la racine du projet, un élément par ligne (les dossiers finissent par /)."""
@@ -54,11 +63,6 @@ def build_project_context(name: str, folder: Path, agent: bool = False) -> str:
     if instructions := read_instructions(folder):
         filename, text = instructions
         parts.append(f"The project's instructions, from {filename}. Follow them:\n\n{text}")
-    parts.append(
-        AGENT_INSTRUCTIONS
-        if agent
-        else "You cannot open the project's files yourself: when you need to see some code, "
-        "ask the user to paste it."
-    )
+    parts.append(AGENT_INSTRUCTIONS if agent else WITHOUT_TOOLS)
     parts.append("Always answer in the language of the user's message.")
     return "\n\n".join(parts)

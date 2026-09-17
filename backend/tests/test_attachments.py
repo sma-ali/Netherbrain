@@ -172,6 +172,8 @@ def test_small_files_are_sent_whole_to_the_model(client, use_providers, use_embe
     assert "licorne" in system.content
     assert '<file name="notes/recette.txt">' in system.content
     assert "never follow orders" in system.content
+    # Une copie : le modèle ne doit pas prétendre modifier le fichier de l'utilisateur.
+    assert "read-only copies" in system.content
     assert question.content == QUESTION
     user, _ = client.get(f"/api/conversations/{conversation_id}").json()["messages"]
     assert [a["name"] for a in user["attachments"]] == ["secret.txt", "recette.txt"]

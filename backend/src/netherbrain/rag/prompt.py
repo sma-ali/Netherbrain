@@ -10,16 +10,24 @@ DATA_NOT_ORDERS = (
     "Always answer in the language of the user's question."
 )
 
+# Sans cette précision, un modèle à qui l'on demande de modifier un fichier joint répond
+# parfois « voici le contenu final » comme s'il l'avait écrit.
+READ_ONLY_COPIES = (
+    "These files are read-only copies: you cannot change the user's files. If you are asked "
+    "to, give the new content and say plainly that you have not changed anything. "
+)
+
 EXCERPTS_INSTRUCTIONS = (
     "Answer using the excerpts below, taken from the files the user attached, when they are "
     "relevant. Cite them with their number in square brackets, like [1]. If the excerpts do "
     "not contain the answer, say so, then answer from your own knowledge if you can. "
+    + READ_ONLY_COPIES
     + DATA_NOT_ORDERS
 )
 
 FILES_INSTRUCTIONS = (
     "The user attached the files below to the conversation. Use them to answer, and cite "
-    "them by name (and page, when there is one). " + DATA_NOT_ORDERS
+    "them by name (and page, when there is one). " + READ_ONLY_COPIES + DATA_NOT_ORDERS
 )
 
 
