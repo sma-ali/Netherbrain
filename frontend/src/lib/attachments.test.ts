@@ -4,9 +4,11 @@ import type { ModelInfo } from "./api"
 import {
   groupAttachments,
   groupStatus,
+  MAX_FILES,
   imageBlocker,
   isIgnored,
   isImage,
+  isLargeFolder,
   runPool,
   type AttachmentItem,
 } from "./attachments"
@@ -101,5 +103,18 @@ describe("images", () => {
     expect(imageBlocker([image()], models[0], [models[0]])).toBe(
       "gpt-oss:20b cannot read images, and no available model can",
     )
+  })
+})
+
+describe("isLargeFolder", () => {
+  const picked = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({ file: new File([""], `${index}.py`) }))
+
+  it("spots a folder that could not be attached whole", () => {
+    // 46 854 fichiers dans le dossier, dont node_modules : seuls quelques-uns restent.
+    expect(isLargeFolder(picked(156), 46_854)).toBe(true)
+    // Glissé-déposé : le total est inconnu, mais la limite est atteinte.
+    expect(isLargeFolder(picked(MAX_FILES))).toBe(true)
+    expect(isLargeFolder(picked(12), 12)).toBe(false)
   })
 })

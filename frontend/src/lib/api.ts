@@ -257,8 +257,8 @@ export interface DirectoryListing {
   directories: FolderInfo[]
 }
 
-/** Clé unique d'un modèle, tous fournisseurs confondus. Un nom de fournisseur ne contient jamais "/". */
-export const modelKey = (model: ModelInfo) => `${model.provider}/${model.id}`
+// Définie avec le choix du modèle par défaut, et toujours importable d'ici.
+export { modelKey } from "@/lib/models"
 
 export async function fetchModels(signal?: AbortSignal): Promise<ModelsResponse> {
   const response = await request("/api/models", { signal })
