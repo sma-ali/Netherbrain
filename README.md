@@ -203,7 +203,11 @@ du projet → résultat renvoyé au modèle → il recommence, jusqu'à 12 fois,
 
 Le mode n'est proposé qu'aux modèles qui savent appeler des outils (`ornith:9b`, `qwen3.5:9b`,
 `gemma4:12b`, `gpt-oss:20b`, la plupart des modèles récents) : la route `/api/models` dit
-lesquels, et le bouton reste grisé pour les autres.
+lesquels, et une clé à molette les signale dans le sélecteur. Dans un projet, le modèle proposé
+par défaut en fait toujours partie : le dernier choisi pour l'agent, sinon le premier capable.
+Netherbrain retient à part le dernier modèle choisi pour discuter. Si l'on choisit malgré tout
+un modèle sans outils, un message l'explique sous la saisie, avec un bouton pour repasser sur
+un modèle capable ; et ce modèle a pour consigne de ne jamais prétendre avoir modifié un fichier.
 
 Les garde-fous :
 
@@ -238,6 +242,9 @@ demande 16384 tokens (`NETHERBRAIN_OLLAMA_CONTEXT_LENGTH`, au prix d'un peu de V
 
 Comme dans Claude, on joint des fichiers **directement dans la conversation** : bouton « + »
 (fichiers ou dossier entier), glisser-déposer n'importe où sur la conversation, ou coller.
+Ce sont des **copies en lecture seule** : pour qu'un modèle modifie des fichiers, ils doivent
+être dans le dossier d'un projet, où l'agent les lit à la demande sans rien importer. Joindre un
+gros dossier (plus de 200 fichiers) propose d'ailleurs d'en faire un projet.
 Images, PDF et tout fichier texte sont acceptés, code compris (`.py`, `.tsx`, `Dockerfile`, CSV…).
 Dans un dossier, les fichiers cachés (`.env`, `.git`…) et les dépendances (`node_modules`…)
 sont ignorés.
