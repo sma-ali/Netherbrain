@@ -26,6 +26,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --- Étape d'exécution : juste Python et l'environnement virtuel, sans uv ni sources ---
 FROM python:3.14-slim
 
+# git : les outils Git de l'agent (état, diff, commits dans le dossier de travail).
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # Ne jamais tourner en root dans le conteneur.
 RUN useradd --create-home --uid 1000 netherbrain
 WORKDIR /app

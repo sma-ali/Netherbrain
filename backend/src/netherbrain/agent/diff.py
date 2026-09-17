@@ -17,7 +17,13 @@ def make_diff(path: str, old: str, new: str, *, created: bool = False) -> FileDi
     # déduit le minimum de lignes à retirer et à ajouter.
     changes = difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=CONTEXT_LINES)
     # Les deux premières lignes (« --- » et « +++ ») répètent le nom du fichier : inutiles ici.
-    lines = [line for index, line in enumerate(changes) if index >= 2]
+    return diff_from_lines(
+        path, [line for index, line in enumerate(changes) if index >= 2], created=created
+    )
+
+
+def diff_from_lines(path: str, lines: list[str], *, created: bool = False) -> FileDiff:
+    """Un diff à partir de ses blocs (« @@ … », puis +, - ou espace), compté puis coupé."""
     return FileDiff(
         path=path,
         created=created,

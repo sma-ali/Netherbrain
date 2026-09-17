@@ -31,6 +31,7 @@ Développement en cours. Jalon actuel : **un agent de code sûr et lisible**.
 - [x] Diff de chaque écriture de l'agent, à relire avant d'autoriser
 - [x] Dossier de travail dédié, seul monté dans Docker ; commandes de l'agent sans les secrets
 - [x] Une adresse par conversation (`/c/<id>`) : rechargement, favoris, précédent / suivant
+- [x] Git pour l'agent : état, diff, historique, et commits sur autorisation, avec le diff de chaque fichier
 
 ## Architecture
 
@@ -205,6 +206,28 @@ plus tard ce que l'agent a modifié, fichier par fichier.
 Un septième outil, `ask_user`, permet au modèle de **vous poser une question** quand une
 décision vous revient : ses propositions s'affichent en boutons, et vous pouvez aussi taper
 votre propre réponse.
+
+Dans un dépôt Git, l'agent a aussi `git_status`, `git_diff` et `git_log` (lecture), et
+`git_commit`, soumis à votre accord : la demande affiche le message et le diff de **chaque
+fichier** qui sera enregistré, nouveaux fichiers compris. Les commits sont signés
+« Netherbrain agent », pour que l'historique dise qui a fait quoi. Git est lancé sans shell, avec
+une configuration neutre et **sans les hooks du dépôt** : un dépôt piégé ne peut pas exécuter de
+code au moment d'un commit. Ni push, ni checkout, ni reset : l'agent enregistre, vous décidez
+du reste.
+
+Pour faire travailler l'agent sur un de vos dépôts sans lui ouvrir le vrai, clonez-le dans le
+dossier de travail, sur une branche à lui, puis récupérez son travail comme celui d'un collègue :
+
+```bash
+git clone ~/Projects/mon-app ~/netherbrain-workspace/mon-app
+git -C ~/netherbrain-workspace/mon-app switch -c agent
+# plus tard, depuis le vrai dépôt :
+git -C ~/Projects/mon-app pull ~/netherbrain-workspace/mon-app agent
+```
+
+Le clone ne contient que les fichiers suivis par Git : ni `.env`, ni `node_modules`. (Un
+`git worktree` ne marche pas dans Docker : son dossier `.git` pointe vers le dépôt d'origine,
+que le conteneur ne voit pas.)
 
 ```
 Question → le modèle demande un outil → autorisation si nécessaire → exécution dans le dossier

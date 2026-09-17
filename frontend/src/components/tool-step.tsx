@@ -7,6 +7,10 @@ import {
   FilePen,
   FileText,
   FolderTree,
+  GitBranch,
+  GitCommitHorizontal,
+  GitCompare,
+  History,
   Loader2,
   MessageSquare,
   Search,
@@ -23,6 +27,7 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import type { AgentStep, FileDiff, ToolDecision } from "@/lib/api"
+import { stepDiffs, totalChanges } from "@/lib/diff"
 import { cn } from "@/lib/utils"
 
 const ICONS: Record<string, LucideIcon> = {
@@ -32,6 +37,10 @@ const ICONS: Record<string, LucideIcon> = {
   write_file: FilePen,
   edit_file: FilePen,
   run_command: SquareTerminal,
+  git_status: GitBranch,
+  git_diff: GitCompare,
+  git_log: History,
+  git_commit: GitCommitHorizontal,
   ask_user: MessageSquare,
 }
 
@@ -46,6 +55,7 @@ interface ToolStepProps {
 export function ToolStep({ step, onApprove }: ToolStepProps) {
   const Icon = ICONS[step.name] ?? Wrench
   const asking = step.status === "asking"
+  const diffs = stepDiffs(step)
 
   return (
     <div className={cn("rounded-lg border px-3 py-2", asking && "border-primary/60 bg-primary/5")}>
@@ -59,7 +69,9 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
         <Question step={step} onAnswer={(answer) => onApprove?.(step.id, "answer", answer)} />
       ) : asking ? (
         <>
-          {step.diff ? <DiffView diff={step.diff} className="mt-2" /> : <Preview step={step} />}
+          {/* Un commit montre son message puis ses fichiers ; une écriture, son seul diff. */}
+          {(step.name === "git_commit" || diffs.length === 0) && <Preview step={step} />}
+          {diffs.length > 0 && <DiffList diffs={diffs} />}
           <div className="mt-2 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => onApprove?.(step.id, "once")}>
               Allow once
@@ -72,8 +84,8 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
             </Button>
           </div>
         </>
-      ) : step.diff && step.status === "done" ? (
-        <Changes diff={step.diff} summary={step.output} />
+      ) : diffs.length > 0 && step.status === "done" ? (
+        <Changes diffs={diffs} summary={step.output} />
       ) : (
         step.output && <Output text={step.output} failed={step.status !== "done"} />
       )}
@@ -145,11 +157,13 @@ function Preview({ step }: { step: AgentStep }) {
   const text =
     typeof args.command === "string"
       ? args.command
-      : typeof args.new_string === "string"
-        ? `- ${args.old_string ?? ""}\n+ ${args.new_string}`
-        : typeof args.content === "string"
-          ? args.content
-          : JSON.stringify(args, null, 2)
+      : typeof args.message === "string"
+        ? `Commit message: ${args.message}`
+        : typeof args.new_string === "string"
+          ? `- ${args.old_string ?? ""}\n+ ${args.new_string}`
+          : typeof args.content === "string"
+            ? args.content
+            : JSON.stringify(args, null, 2)
 
   return (
     <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
@@ -158,17 +172,30 @@ function Preview({ step }: { step: AgentStep }) {
   )
 }
 
-/** Une écriture faite : son résultat, et le diff à déplier pour revoir ce qui a changé. */
-function Changes({ diff, summary }: { diff: FileDiff; summary: string }) {
+/** Les fichiers d'une écriture ou d'un commit, chacun avec son diff. */
+function DiffList({ diffs, className = "mt-2" }: { diffs: FileDiff[]; className?: string }) {
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      {diffs.map((diff) => (
+        <DiffView key={diff.path} diff={diff} />
+      ))}
+    </div>
+  )
+}
+
+/** Une écriture ou un commit fait : son résultat, et les diffs à déplier pour revoir. */
+function Changes({ diffs, summary }: { diffs: FileDiff[]; summary: string }) {
   return (
     <Collapsible>
       <CollapsibleTrigger className="group mt-1 flex w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
         <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-panel-open:rotate-90" />
-        <span className="truncate">{summary}</span>
-        <DiffStats diff={diff} className="ml-1" />
+        {/* Un commit résume ses fichiers sur plusieurs lignes : la première suffit ici. */}
+        <span className="truncate">{summary.split("\n")[0]}</span>
+        {diffs.length > 1 && <span className="shrink-0">· {diffs.length} files</span>}
+        <DiffStats diff={totalChanges(diffs)} className="ml-1" />
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <DiffView diff={diff} className="mt-1" />
+        <DiffList diffs={diffs} className="mt-1" />
       </CollapsibleContent>
     </Collapsible>
   )

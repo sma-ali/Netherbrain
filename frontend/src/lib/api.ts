@@ -77,7 +77,10 @@ export interface AgentStep {
   kind?: "approval" | "question"
   question?: string
   options?: string[]
-  // write_file et edit_file : ce que l'écriture change, à relire avant d'autoriser.
+  // Ce que l'action change, fichier par fichier, à relire avant d'autoriser : un fichier pour
+  // write_file et edit_file, tous ceux du commit pour git_commit.
+  diffs?: FileDiff[] | null
+  // L'ancien format, un seul fichier, des réponses enregistrées avant `diffs`.
   diff?: FileDiff | null
 }
 
@@ -98,7 +101,7 @@ export type ChatEvent =
       arguments?: Record<string, unknown>
       question?: string
       options?: string[]
-      diff?: FileDiff
+      diffs?: FileDiff[]
     }
   | {
       type: "tool_result"
@@ -107,7 +110,7 @@ export type ChatEvent =
       summary: string
       status: string
       output: string
-      diff?: FileDiff
+      diffs?: FileDiff[]
     }
   | { type: "done"; metrics: ChatMetrics }
   | { type: "error"; message: string }

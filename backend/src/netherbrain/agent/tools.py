@@ -7,7 +7,7 @@ pour le navigateur de dossiers : ni « .. », ni chemin absolu, ni lien symboliq
 import os
 import re
 import subprocess
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,8 @@ from typing import Any
 import anyio
 
 from netherbrain.agent.diff import make_diff
+from netherbrain.agent.environment import command_environment
+from netherbrain.agent.git import GitError, is_git_repository, parse_diff, run_git
 from netherbrain.projects.workspace import Workspace, WorkspaceError
 from netherbrain.schemas import FileDiff
 
@@ -30,23 +32,6 @@ IGNORED = frozenset(
         "coverage",
     }
 )
-
-
-# Les seules variables d'environnement transmises aux commandes : de quoi trouver les
-# programmes et afficher du texte, rien de plus. Une liste de ce qui est permis plutôt que de
-# ce qui est interdit : une clé d'API ajoutée demain restera cachée sans y penser.
-COMMAND_ENVIRONMENT = frozenset(
-    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR"}
-)
-
-
-def command_environment(environ: Mapping[str, str]) -> dict[str, str]:
-    """L'environnement d'une commande de l'agent, sans les secrets du serveur."""
-    return {
-        name: value
-        for name, value in environ.items()
-        if name in COMMAND_ENVIRONMENT or name.startswith("LC_")
-    }
 
 
 class ToolError(Exception):
@@ -73,6 +58,12 @@ def _schema(name: str, description: str, properties: dict, required: list[str]) 
 
 STRING = {"type": "string"}
 INTEGER = {"type": "integer"}
+
+# Proposés seulement dans un dépôt Git, quand git est installé.
+GIT_TOOLS = frozenset({"git_status", "git_diff", "git_log", "git_commit"})
+# Au-delà, un commit n'est pas prévisualisé en entier (il enregistre quand même tout).
+MAX_PREVIEW_FILES = 20
+MAX_PREVIEW_BYTES = 200_000
 
 # Un outil à part : il n'agit pas sur les fichiers, il pose une question à l'utilisateur,
 # qui répond en cliquant sur l'une des propositions (ou en écrivant sa propre réponse).
@@ -124,6 +115,34 @@ SCHEMAS = [
         ["command"],
     ),
     _schema(
+        "git_status",
+        "Show which files changed since the last commit, and the current branch.",
+        {},
+        [],
+    ),
+    _schema(
+        "git_diff",
+        "Show the changes not committed yet, line by line, like `git diff`.",
+        {
+            "path": {**STRING, "description": "File or folder to limit the diff to. Default: '.'"},
+            "staged": {"type": "boolean", "description": "Only the staged changes."},
+        },
+        [],
+    ),
+    _schema(
+        "git_log",
+        "List the last commits of the current branch.",
+        {"limit": {**INTEGER, "description": "How many commits (10 by default, 50 at most)."}},
+        [],
+    ),
+    _schema(
+        "git_commit",
+        "Commit every change of the project (new files included) with a message. "
+        "Asks the user for permission, showing them the changes.",
+        {"message": {**STRING, "description": "Short summary of what changed and why."}},
+        ["message"],
+    ),
+    _schema(
         ASK_USER,
         "Ask the user a question when a decision is theirs to make, or when you need a "
         "detail you cannot find in the project, then wait for the answer. Offer 2 to 4 "
@@ -145,7 +164,7 @@ class Toolbox:
     """Les outils d'un projet donné, tous confinés à son dossier."""
 
     # Ceux qui modifient quelque chose : ils demandent l'accord de l'utilisateur.
-    APPROVAL_NEEDED = frozenset({"write_file", "edit_file", "run_command"})
+    APPROVAL_NEEDED = frozenset({"write_file", "edit_file", "run_command", "git_commit"})
 
     def __init__(
         self,
@@ -163,6 +182,7 @@ class Toolbox:
         self._max_entries = max_entries
         self._command_timeout = command_timeout
         self._allow_commands = allow_commands
+        self._git = is_git_repository(self._files.root)
 
     @property
     def folder(self) -> Path:
@@ -170,10 +190,12 @@ class Toolbox:
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
-        """Les outils proposés au modèle : sans run_command si les commandes sont coupées."""
-        if self._allow_commands:
-            return SCHEMAS
-        return [schema for schema in SCHEMAS if schema["function"]["name"] != "run_command"]
+        """Les outils proposés au modèle : sans run_command si les commandes sont coupées, sans
+        ceux de Git hors d'un dépôt."""
+        hidden = (set() if self._allow_commands else {"run_command"}) | (
+            set() if self._git else GIT_TOOLS
+        )
+        return [schema for schema in SCHEMAS if schema["function"]["name"] not in hidden]
 
     def needs_approval(self, name: str) -> bool:
         # Un outil indisponible est refusé d'office : inutile de déranger l'utilisateur.
@@ -188,21 +210,59 @@ class Toolbox:
             detail = str(arguments.get("command", ""))
         else:
             detail = str(
-                arguments.get("path") or arguments.get("pattern") or arguments.get("question") or ""
+                arguments.get("path")
+                or arguments.get("pattern")
+                or arguments.get("question")
+                or arguments.get("message")
+                or ""
             )
         if len(detail) > 120:
             detail = detail[:117] + "…"
         return f"{name}({detail})"
 
-    async def preview(self, name: str, arguments: dict[str, Any]) -> FileDiff | None:
-        """Ce que write_file ou edit_file changerait, sans rien écrire : à relire avant d'autoriser.
+    async def preview(self, name: str, arguments: dict[str, Any]) -> list[FileDiff]:
+        """Ce que l'action changerait, fichier par fichier, sans rien écrire : à relire avant
+        d'autoriser. Un fichier pour write_file et edit_file, tous ceux du commit pour git_commit.
 
-        None pour les autres outils, et pour un appel voué à l'échec (fichier introuvable,
+        Vide pour les autres outils, et pour un appel voué à l'échec (fichier introuvable,
         extrait absent) : l'erreur viendra de l'exécution, avec son explication.
         """
         return await anyio.to_thread.run_sync(lambda: self._preview(name, arguments))
 
-    def _preview(self, name: str, arguments: dict[str, Any]) -> FileDiff | None:
+    def _preview(self, name: str, arguments: dict[str, Any]) -> list[FileDiff]:
+        if name == "git_commit":
+            try:
+                return self._pending_changes() if self._git else []
+            except ToolError, WorkspaceError, OSError:
+                return []
+        diff = self._file_preview(name, arguments)
+        return [diff] if diff else []
+
+    def _pending_changes(self) -> list[FileDiff]:
+        """Ce qu'un commit de tout le projet enregistrerait : fichiers suivis, puis nouveaux."""
+        has_head = self._git_quiet("rev-parse", "--verify", "--quiet", "HEAD")
+        diffs = parse_diff(
+            self._run_git("diff", "HEAD" if has_head else "--cached", "--no-color", "--no-ext-diff")
+        )
+        untracked = self._run_git("ls-files", "--others", "--exclude-standard", "-z")
+        for path in [path for path in untracked.split("\0") if path]:
+            if len(diffs) >= MAX_PREVIEW_FILES:
+                break
+            diffs.append(self._new_file_diff(path))
+        return diffs[:MAX_PREVIEW_FILES]
+
+    def _new_file_diff(self, path: str) -> FileDiff:
+        # resolve() : un lien symbolique non suivi par Git ne doit pas faire lire l'extérieur.
+        file = self._files.resolve(path)
+        empty = FileDiff(path=path, created=True, added=0, removed=0, lines=[])
+        try:
+            if file.stat().st_size > MAX_PREVIEW_BYTES:
+                return empty
+            return make_diff(path, "", file.read_text(encoding="utf-8"), created=True)
+        except OSError, UnicodeDecodeError:
+            return empty  # binaire ou illisible : il sera commité, sans aperçu
+
+    def _file_preview(self, name: str, arguments: dict[str, Any]) -> FileDiff | None:
         path = arguments.get("path")
         if name not in ("write_file", "edit_file") or not isinstance(path, str):
             return None
@@ -312,6 +372,50 @@ class Toolbox:
             raise ToolError(f"old_string appears {found} times in {path}: make it unique")
         file.write_text(text.replace(old_string, new_string), encoding="utf-8")
         return f"Edited {path}"
+
+    def _git_status(self) -> str:
+        return self._run_git("status", "--short", "--branch").strip()
+
+    def _git_diff(self, path: str = ".", staged: bool = False) -> str:
+        # Le chemin passe par la même garde que les autres outils, puis après « -- » : Git ne
+        # peut pas le prendre pour une option.
+        target = self._files.relative(self._files.resolve(path)) or "."
+        arguments = ["diff", "--no-color", "--no-ext-diff"]
+        if staged:
+            arguments.append("--staged")
+        return self._run_git(*arguments, "--", target).strip() or "No changes."
+
+    def _git_log(self, limit: int = 10) -> str:
+        count = max(1, min(limit, 50)) if isinstance(limit, int) else 10
+        try:
+            return self._run_git("log", "--oneline", "--decorate", f"-n{count}").strip()
+        except ToolError as exc:
+            if "does not have any commits" in str(exc):
+                return "No commits yet."
+            raise
+
+    def _git_commit(self, message: str) -> str:
+        if not isinstance(message, str) or not message.strip():
+            raise ToolError("A commit needs a message")
+        self._run_git("add", "--all")
+        if not self._run_git("diff", "--cached", "--name-only").strip():
+            raise ToolError("Nothing to commit: no file changed since the last commit")
+        self._run_git("commit", "--quiet", "-m", message.strip())
+        return self._run_git("show", "--stat", "--format=Committed %h: %s", "HEAD").strip()
+
+    def _run_git(self, *arguments: str) -> str:
+        try:
+            return run_git(self._files.root, *arguments, timeout=self._command_timeout)
+        except GitError as exc:
+            raise ToolError(str(exc)) from exc
+
+    def _git_quiet(self, *arguments: str) -> bool:
+        """Vrai si la commande réussit (pour un test, comme « y a-t-il un commit ? »)."""
+        try:
+            self._run_git(*arguments)
+        except ToolError:
+            return False
+        return True
 
     def _run_command(self, command: str) -> str:
         try:

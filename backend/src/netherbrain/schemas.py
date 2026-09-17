@@ -251,7 +251,10 @@ class AgentStep(BaseModel):
     # done : exécuté ; error : l'outil a échoué ; denied : l'utilisateur a refusé.
     status: Literal["done", "error", "denied"]
     output: str
-    # write_file et edit_file : ce que l'écriture change (ou aurait changé, si refusée).
+    # Ce que l'action change, fichier par fichier (ou aurait changé, si elle a été refusée) :
+    # un fichier pour write_file et edit_file, tous ceux du commit pour git_commit.
+    diffs: list[FileDiff] | None = None
+    # L'ancien format, un seul fichier : les réponses enregistrées avant `diffs` le gardent.
     diff: FileDiff | None = None
 
 
