@@ -3,7 +3,7 @@ name: netherbrain
 
 services:
   db:
-    image: pgvector/pgvector:pg18 # PostgreSQL + l'extension pgvector (pour le futur RAG)
+    image: pgvector/pgvector:pg18 # PostgreSQL + l'extension pgvector (pour le RAG)
     environment:
       POSTGRES_USER: netherbrain
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netherbrain}
@@ -32,6 +32,20 @@ services:
       NETHERBRAIN_DATABASE_URL: postgresql+asyncpg://netherbrain:${POSTGRES_PASSWORD:-netherbrain}@db:5432/netherbrain
       # Dans un conteneur, « localhost » désigne le conteneur lui-même : Ollama tourne sur l'hôte.
       NETHERBRAIN_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      # Le dossier de travail (les projets), monté juste en dessous.
+      NETHERBRAIN_WORKSPACE_ROOT: /workspace
+    volumes:
+      # Le dossier de travail, et lui seul : le conteneur ne voit rien d'autre de la machine,
+      # ni vos autres projets, ni le .env et ses clés. C'est Docker qui garantit cette limite,
+      # même si le code de l'API avait un bug. En écriture, car l'agent modifie les fichiers,
+      # mais seulement après votre accord, action par action.
+      - type: bind
+        source: ${NETHERBRAIN_WORKSPACE:-~/netherbrain-workspace}
+        target: /workspace
+        bind:
+          # Dossier absent : une erreur claire, plutôt qu'un dossier créé par root, où ni vous
+          # ni l'API ne pourriez écrire.
+          create_host_path: false
     extra_hosts:
       - "host.docker.internal:host-gateway" # intégré à Docker Desktop, nécessaire sous Linux
     depends_on:

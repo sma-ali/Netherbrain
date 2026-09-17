@@ -18,9 +18,9 @@ def test_models_are_aggregated_across_providers(client, use_providers):
     body = client.get("/api/models").json()
 
     assert body["models"] == [
-        {"id": "a", "provider": "local"},
-        {"id": "b", "provider": "local"},
-        {"id": "c", "provider": "remote"},
+        {"id": "a", "provider": "local", "tools": False, "vision": False},
+        {"id": "b", "provider": "local", "tools": False, "vision": False},
+        {"id": "c", "provider": "remote", "tools": False, "vision": False},
     ]
     assert [p["available"] for p in body["providers"]] == [True, True]
 
@@ -32,7 +32,9 @@ def test_a_failing_provider_does_not_hide_the_others(client, use_providers):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["models"] == [{"id": "local-model", "provider": "local"}]
+    assert body["models"] == [
+        {"id": "local-model", "provider": "local", "tools": False, "vision": False}
+    ]
     assert body["providers"] == [
         {"name": "local", "local": False, "available": True, "error": None},
         {"name": "remote", "local": False, "available": False, "error": "remote: unreachable"},

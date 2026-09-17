@@ -1,10 +1,17 @@
 "use client"
 
-import { ArrowUp, Square } from "lucide-react"
-import { useState } from "react"
+import { ArrowUp, FolderUp, Paperclip, Plus, Square } from "lucide-react"
+import { useRef, useState, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
+import { filesFromFolderInput, type PickedFile } from "@/lib/attachments"
 
 interface ComposerProps {
   onSend: (text: string) => void
@@ -12,11 +19,37 @@ interface ComposerProps {
   streaming: boolean
   disabled: boolean
   placeholder?: string
+  /** Reçoit les fichiers choisis ; sans cette fonction, pas de bouton pour en joindre. */
+  onAttach?: (files: PickedFile[]) => void
+  /** Les fichiers joints en attente, affichés au-dessus du texte. */
+  attachments?: ReactNode
+  /** Des fichiers sont encore en cours d'envoi ou de lecture : on ne peut pas envoyer. */
+  busy?: boolean
+  /** Ce qui empêche d'envoyer (des images pour un modèle qui ne les lit pas), affiché tel quel. */
+  blocked?: string | null
+  /** D'autres boutons, sous le texte, à gauche : le mode agent, par exemple. */
+  toolbar?: ReactNode
+  /** Le texte déjà saisi à l'ouverture (une demande reprise d'une autre page). */
+  initialValue?: string
 }
 
-export function Composer({ onSend, onStop, streaming, disabled, placeholder }: ComposerProps) {
-  const [value, setValue] = useState("")
-  const canSend = !disabled && !streaming && value.trim() !== ""
+export function Composer({
+  onSend,
+  onStop,
+  streaming,
+  disabled,
+  placeholder,
+  onAttach,
+  attachments,
+  busy = false,
+  blocked = null,
+  toolbar,
+  initialValue = "",
+}: ComposerProps) {
+  const [value, setValue] = useState(initialValue)
+  const filesInput = useRef<HTMLInputElement>(null)
+  const folderInput = useRef<HTMLInputElement>(null)
+  const canSend = !disabled && !streaming && !busy && !blocked && value.trim() !== ""
 
   const submit = () => {
     if (!canSend) return
@@ -30,8 +63,14 @@ export function Composer({ onSend, onStop, streaming, disabled, placeholder }: C
         event.preventDefault()
         submit()
       }}
-      className="relative"
+      className="rounded-2xl border bg-card/60 transition-colors focus-within:border-ring"
     >
+      {attachments && <div className="px-3 pt-3">{attachments}</div>}
+      {blocked && (
+        <p role="status" className="px-4 pt-2 text-xs text-amber-600 dark:text-amber-400">
+          {blocked}
+        </p>
+      )}
       <Textarea
         value={value}
         onChange={(event) => setValue(event.target.value)}
@@ -43,22 +82,96 @@ export function Composer({ onSend, onStop, streaming, disabled, placeholder }: C
             submit()
           }
         }}
+        onPaste={(event) => {
+          // Coller un fichier copié (ou une capture d'écran) le joint au message.
+          const files = Array.from(event.clipboardData.files)
+          if (!onAttach || files.length === 0) return
+          event.preventDefault()
+          onAttach(files.map((file) => ({ file })))
+        }}
         placeholder={placeholder ?? (disabled ? "No model available" : "Ask the Netherbrain…")}
         disabled={disabled}
         rows={1}
         aria-label="Message"
-        className="max-h-60 min-h-12 resize-none rounded-2xl py-3 pr-12 pl-4"
+        className="max-h-60 min-h-12 resize-none border-0 bg-transparent px-4 py-3 shadow-none focus-visible:ring-0 dark:bg-transparent"
       />
-      <div className="absolute right-2 bottom-2">
-        {streaming ? (
-          <Button type="button" size="icon" variant="secondary" onClick={onStop} aria-label="Stop">
-            <Square className="fill-current" />
-          </Button>
-        ) : (
-          <Button type="submit" size="icon" disabled={!canSend} aria-label="Send">
-            <ArrowUp />
-          </Button>
+      <div className="flex items-center gap-1.5 px-2 pb-2">
+        {onAttach && (
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Attach files or a folder"
+                    disabled={disabled}
+                  />
+                }
+              >
+                <Plus />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-44">
+                <DropdownMenuItem onClick={() => filesInput.current?.click()}>
+                  <Paperclip />
+                  Add files
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => folderInput.current?.click()}>
+                  <FolderUp />
+                  Add a folder
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <input
+              ref={filesInput}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? [])
+                if (files.length > 0) onAttach(files.map((file) => ({ file })))
+                // Permet de rejoindre le même fichier juste après.
+                event.target.value = ""
+              }}
+            />
+            <input
+              ref={folderInput}
+              type="file"
+              hidden
+              // Choisir un dossier entier : l'attribut n'est pas dans les types de React.
+              {...{ webkitdirectory: "" }}
+              onChange={(event) => {
+                if (event.target.files) onAttach(filesFromFolderInput(event.target.files))
+                event.target.value = ""
+              }}
+            />
+          </>
         )}
+        {toolbar}
+        <div className="ml-auto">
+          {streaming ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              onClick={onStop}
+              aria-label="Stop"
+            >
+              <Square className="fill-current" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!canSend}
+              aria-label="Send"
+              title={blocked ?? (busy ? "Wait until the attached files are read" : undefined)}
+            >
+              <ArrowUp />
+            </Button>
+          )}
+        </div>
       </div>
     </form>
   )

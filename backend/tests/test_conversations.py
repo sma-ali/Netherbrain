@@ -29,12 +29,18 @@ async def count_messages(session_factory) -> int:
         return await session.scalar(select(func.count()).select_from(Message))
 
 
-def test_a_new_conversation_is_listed(client):
+def test_a_conversation_is_listed_once_it_has_a_message(client, use_providers):
+    use_providers(FakeProvider(events=[TokenEvent(content="ok")]))
     response = client.post("/api/conversations")
 
     assert response.status_code == 201
     conversation = response.json()
     assert conversation["title"] is None
+    # Vide, elle n'apparaît pas encore : joindre un fichier crée une conversation vide.
+    assert client.get("/api/conversations").json() == []
+
+    send(client, conversation["id"])
+
     assert [c["id"] for c in client.get("/api/conversations").json()] == [conversation["id"]]
 
 
@@ -96,6 +102,8 @@ def test_the_most_recently_active_conversation_comes_first(client, use_providers
     use_providers(FakeProvider(events=[TokenEvent(content="ok")]))
     older = new_conversation(client)
     newer = new_conversation(client)
+    send(client, older, "Première")
+    send(client, newer, "Deuxième")
 
     send(client, older, "Je relance la plus ancienne")
 

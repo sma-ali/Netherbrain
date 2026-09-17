@@ -13,15 +13,21 @@ from fastapi import Depends, HTTPException
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from netherbrain.advisor.sources import ArtificialAnalysisClient
+from netherbrain.agent.approvals import ApprovalRegistry
 from netherbrain.config import Settings, get_settings
+from netherbrain.db.models import EMBEDDING_DIMENSIONS
 from netherbrain.db.session import create_engine
+from netherbrain.projects.workspace import Workspace
 from netherbrain.providers import (
     LLMProvider,
+    OllamaProvider,
     OpenAICompatibleProvider,
     ProviderRegistry,
     UnknownProviderError,
 )
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
+from netherbrain.rag.embeddings import Embedder, OllamaEmbedder
 
 # En-têtes d'attribution facultatifs : ils identifient l'application sur openrouter.ai.
 OPENROUTER_HEADERS = {
@@ -36,7 +42,7 @@ OPENROUTER_HEADERS = {
 def build_registry(settings: Settings) -> ProviderRegistry:
     """Ollama est toujours présent ; chaque fournisseur distant s'active avec sa clé d'API."""
     providers: list[LLMProvider] = [
-        OpenAICompatibleProvider("ollama", settings.ollama_base_url, local=True),
+        OllamaProvider(settings.ollama_base_url, context_length=settings.ollama_context_length),
     ]
     if key := _secret(settings.openrouter_api_key):
         providers.append(
@@ -104,3 +110,58 @@ async def get_session(factory: SessionFactory) -> AsyncIterator[AsyncSession]:
 
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
+
+
+# --- Configuration et RAG ---
+
+SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+
+@lru_cache
+def get_embedder() -> Embedder:
+    settings = get_settings()
+    return OllamaEmbedder(
+        settings.ollama_base_url,
+        settings.embedding_model,
+        document_prefix=settings.embedding_document_prefix,
+        query_prefix=settings.embedding_query_prefix,
+        dimensions=EMBEDDING_DIMENSIONS,
+    )
+
+
+EmbedderDep = Annotated[Embedder, Depends(get_embedder)]
+
+
+# --- Projets ---
+
+
+@lru_cache
+def get_workspace() -> Workspace:
+    return Workspace(get_settings().workspace_root)
+
+
+WorkspaceDep = Annotated[Workspace, Depends(get_workspace)]
+
+
+@lru_cache
+def get_approvals() -> ApprovalRegistry:
+    """Un seul registre pour toute l'application : les demandes vivent en mémoire."""
+    return ApprovalRegistry(timeout=get_settings().agent_approval_timeout)
+
+
+ApprovalsDep = Annotated[ApprovalRegistry, Depends(get_approvals)]
+
+
+# --- Conseiller de modèles ---
+
+
+@lru_cache
+def get_benchmarks_client() -> ArtificialAnalysisClient | None:
+    """Le client des benchmarks en ligne, ou None sans clé d'API (grille seule)."""
+    settings = get_settings()
+    if key := _secret(settings.artificial_analysis_api_key):
+        return ArtificialAnalysisClient(key, settings.artificial_analysis_base_url)
+    return None
+
+
+BenchmarksClientDep = Annotated[ArtificialAnalysisClient | None, Depends(get_benchmarks_client)]

@@ -1,10 +1,39 @@
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 import openai
 from openai import AsyncOpenAI
 
-from netherbrain.providers.base import ProviderError
-from netherbrain.schemas import ChatMessage, ReasoningEvent, StreamEvent, TokenEvent, UsageEvent
+from netherbrain.providers.base import ProviderError, parse_json_object
+from netherbrain.providers.catalog import card_from_openai_compatible
+from netherbrain.schemas import (
+    ChatMessage,
+    ModelCard,
+    ReasoningEvent,
+    StreamEvent,
+    TokenEvent,
+    ToolCallEvent,
+    UsageEvent,
+)
+
+
+def openai_message(message: ChatMessage) -> dict[str, Any]:
+    """Un message au format d'OpenAI. Avec des images, le contenu devient une liste de parties :
+    le texte, puis chaque image en « data URL » (son type et ses octets en base64)."""
+    # exclude_none : un `tool_call_id: null` ferait refuser la requête.
+    payload = message.model_dump(exclude_none=True, exclude={"images"})
+    if message.images:
+        payload["content"] = [
+            {"type": "text", "text": message.content},
+            *(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image.media_type};base64,{image.data}"},
+                }
+                for image in message.images
+            ),
+        ]
+    return payload
 
 
 def describe_error(exc: openai.APIError) -> str:
@@ -53,25 +82,37 @@ class OpenAICompatibleProvider:
         )
 
     async def list_models(self) -> list[str]:
+        return [card.id for card in await self.describe_models()]
+
+    async def describe_models(self) -> list[ModelCard]:
         try:
             page = await self._client.models.list()
         except openai.APIError as exc:
             raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc
-        return sorted(
-            model.id
+        cards = [
+            # model_extra : les champs que le fournisseur ajoute au format standard.
+            card_from_openai_compatible(self.name, model.id, model.model_extra or {}, self.local)
             for model in page.data
             if self._model_filter is None or self._model_filter(model.id)
-        )
+        ]
+        return sorted(cards, key=lambda card: card.id)
 
     async def stream_chat(
-        self, model: str, messages: list[ChatMessage]
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        """Streame la réponse. Avec `tools`, le modèle peut demander à en utiliser un."""
+        # Les appels d'outils arrivent en morceaux, à assembler par numéro d'appel.
+        calls: dict[int, dict[str, str]] = {}
         try:
             stream = await self._client.chat.completions.create(
                 model=model,
-                messages=[message.model_dump() for message in messages],
+                messages=[openai_message(message) for message in messages],
                 stream=True,
                 stream_options={"include_usage": True},
+                **({"tools": tools} if tools else {}),
             )
             async for chunk in stream:
                 if chunk.usage:
@@ -86,5 +127,49 @@ class OpenAICompatibleProvider:
                         yield ReasoningEvent(content=reasoning)
                     if choice.delta.content:
                         yield TokenEvent(content=choice.delta.content)
+                    for fragment in choice.delta.tool_calls or []:
+                        call = calls.setdefault(
+                            fragment.index, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if fragment.id:
+                            call["id"] = fragment.id
+                        if fragment.function and fragment.function.name:
+                            call["name"] = fragment.function.name
+                        if fragment.function and fragment.function.arguments:
+                            call["arguments"] += fragment.function.arguments
         except openai.APIError as exc:
             raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc
+
+        # Les appels complets partent à la fin du stream, dans l'ordre demandé par le modèle.
+        for index in sorted(calls):
+            call = calls[index]
+            yield ToolCallEvent(
+                id=call["id"] or f"call_{index}", name=call["name"], arguments=call["arguments"]
+            )
+
+    async def complete_json(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        schema: dict[str, Any],
+        *,
+        think: bool | None = None,
+    ) -> dict[str, Any]:
+        """Sortie structurée via `response_format` (pas tous les modèles la prennent en charge).
+
+        `think` n'a pas d'équivalent standard dans l'API d'OpenAI : il est ignoré ici.
+        """
+        try:
+            completion = await self._client.chat.completions.create(
+                model=model,
+                messages=[openai_message(message) for message in messages],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "answer", "schema": schema},
+                },
+                temperature=0,
+            )
+        except openai.APIError as exc:
+            raise ProviderError(f"{self.name}: {describe_error(exc)}") from exc
+        content = completion.choices[0].message.content if completion.choices else None
+        return parse_json_object(self.name, content or "")
