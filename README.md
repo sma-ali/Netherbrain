@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des benchmarks en ligne**.
+Développement en cours. Jalon actuel : **un agent de code sûr et lisible**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -27,6 +27,10 @@ Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des
 - [x] Projets, façon Claude Code : un dossier de code par projet, avec ses conversations et ses consignes (AGENTS.md)
 - [x] Agent de code : le modèle lit, cherche et modifie les fichiers du projet, chaque action sensible demandant votre accord
 - [x] Questions de l'agent, avec des réponses en un clic (outil `ask_user`)
+- [x] Images dans le chat, envoyées aux modèles qui savent les lire
+- [x] Diff de chaque écriture de l'agent, à relire avant d'autoriser
+- [x] Dossier de travail dédié, seul monté dans Docker ; commandes de l'agent sans les secrets
+- [x] Une adresse par conversation (`/c/<id>`) : rechargement, favoris, précédent / suivant
 
 ## Architecture
 
@@ -68,6 +72,12 @@ la machine (le désactiver libère le GPU pour d'autres usages, comme les jeux).
 Les conversations sont stockées dans PostgreSQL, sur le volume `pgdata` : elles survivent aux
 redémarrages, mais `docker compose down -v` les efface. Les migrations s'appliquent
 automatiquement au démarrage de l'API.
+
+Chaque conversation a son adresse, `http://localhost:3000/c/<id>` : recharger la page y ramène,
+on peut la garder en favori ou l'ouvrir dans un nouvel onglet (clic du milieu dans la barre
+latérale), et les boutons précédent / suivant du navigateur passent d'une conversation à
+l'autre. Une nouvelle conversation dans un projet a l'adresse `/?project=<id>`. L'adresse change
+sans recharger la page (`history.pushState`, que Next.js synchronise avec son routeur).
 
 Le conteneur de l'API joint Ollama via `host.docker.internal`. Sous Linux, Ollama n'écoute par
 défaut que sur `127.0.0.1`, que les conteneurs ne peuvent pas joindre : définissez

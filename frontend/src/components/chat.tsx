@@ -1,8 +1,8 @@
 "use client"
 
 import { BrainCircuit, Folder, GitBranch, RotateCw, SquarePen, Upload, Wrench } from "lucide-react"
-import { useSearchParams } from "next/navigation"
-import { useEffect, useRef, useState, type DragEvent } from "react"
+import { usePathname, useSearchParams } from "next/navigation"
+import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from "react"
 
 import { AddProjectDialog } from "@/components/add-project-dialog"
 import { AppNav } from "@/components/app-nav"
@@ -30,6 +30,7 @@ import {
 } from "@/lib/api"
 import { filesFromDrop, imageBlocker, isLargeFolder, type PickedFile } from "@/lib/attachments"
 import { defaultModel, rememberPick } from "@/lib/models"
+import { chatPath, conversationIdFromPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
 export function Chat() {
@@ -45,7 +46,11 @@ export function Chat() {
 
   const projects = useSavedList(listProjects, deleteProject)
   // Le projet de la conversation affichée, ou celui d'une nouvelle conversation.
-  const [projectId, setProjectId] = useState<string | null>(null)
+  const searchParams = useSearchParams()
+  // Une conversation a son adresse (/c/<id>) ; une nouvelle, celle de son projet (/?project=<id>).
+  const pathname = usePathname()
+  const addressedConversationId = conversationIdFromPath(pathname)
+  const [projectId, setProjectId] = useState<string | null>(() => searchParams.get("project"))
   const project = projects.items.find((p) => p.id === projectId) ?? null
   const [addingProject, setAddingProject] = useState(false)
 
@@ -61,7 +66,6 @@ export function Chat() {
   // Un dossier joint trop gros : on propose d'en faire un projet.
   const [largeFolder, setLargeFolder] = useState(false)
 
-  const searchParams = useSearchParams()
   // Le modèle choisi pour cette conversation ; null : celui proposé par défaut. Le catalogue
   // peut en présélectionner un via l'URL : /?model=ollama/qwen3:8b
   const [selectedKey, setSelectedKey] = useState<string | null>(() => searchParams.get("model"))
@@ -93,23 +97,83 @@ export function Chat() {
     if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
   }
 
+  // Change l'adresse sans recharger la page : Next.js synchronise usePathname avec l'historique
+  // du navigateur, et les boutons précédent / suivant fonctionnent.
+  const navigate = (path: string, replace = false) => {
+    if (window.location.pathname + window.location.search === path) return
+    if (replace) window.history.replaceState(null, "", path)
+    else window.history.pushState(null, "", path)
+  }
+
   // Changer de conversation remet le modèle proposé par défaut pour ce nouveau contexte :
   // un modèle sans outils choisi pour discuter ne suit pas dans un projet.
-  const openConversation = (conversation: ConversationSummary) => {
-    setProjectId(conversation.project_id)
+  const showConversation = (id: string, knownProjectId: string | null) => {
+    setProjectId(knownProjectId)
     setSelectedKey(null)
     setLargeFolder(false)
     attachments.clear()
-    open(conversation.id)
+    // Ouverte depuis son adresse, la conversation n'est pas forcément déjà dans la liste :
+    // son projet arrive avec son contenu.
+    void open(id).then((conversation) => {
+      if (conversation) setProjectId(conversation.project_id)
+    })
   }
 
-  const newChat = (inProject: string | null) => {
+  const startChat = (inProject: string | null) => {
     setProjectId(inProject)
     setSelectedKey(null)
     setLargeFolder(false)
     attachments.clear()
     reset()
   }
+
+  const openConversation = (conversation: ConversationSummary) => {
+    navigate(chatPath(conversation.id))
+    showConversation(conversation.id, conversation.project_id)
+  }
+
+  const newChat = (inProject: string | null) => {
+    navigate(chatPath(null, inProject))
+    startChat(inProject)
+  }
+
+  // Ouverte depuis son adresse (lien, favori, rechargement) : la conversation s'affiche dès le
+  // chargement, et son projet arrive avec son contenu.
+  const openAddressed = useEffectEvent(() => {
+    const id = conversationIdFromPath(window.location.pathname)
+    if (id === null) return
+    void open(id).then((conversation) => {
+      if (conversation) setProjectId(conversation.project_id)
+    })
+  })
+  useEffect(() => openAddressed(), [])
+
+  // Précédent / suivant : le navigateur change l'adresse tout seul, on affiche ce qu'elle
+  // désigne. useEffectEvent lit l'état le plus récent sans réabonner l'écouteur à chaque rendu.
+  const followHistory = useEffectEvent(() => {
+    const id = conversationIdFromPath(window.location.pathname)
+    if (id === conversationId) return
+    if (id === null) startChat(new URLSearchParams(window.location.search).get("project"))
+    else showConversation(id, conversations.items.find((c) => c.id === id)?.project_id ?? null)
+  })
+  useEffect(() => {
+    const onPopState = () => followHistory()
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [])
+
+  // Une conversation vient d'être créée (premier message, premier fichier) : elle prend son
+  // adresse, en remplaçant celle de la page vide pour que « précédent » n'y revienne pas.
+  const followConversation = useEffectEvent((id: string | null) => {
+    if (id !== null && id !== addressedConversationId) navigate(chatPath(id), true)
+  })
+  useEffect(() => followConversation(conversationId), [conversationId])
+
+  // Le titre de l'onglet : celui de la conversation.
+  const title = conversations.items.find((c) => c.id === conversationId)?.title
+  useEffect(() => {
+    document.title = title ? `${title} · Netherbrain` : "Netherbrain"
+  }, [title])
 
   const attach = (picked: PickedFile[], total?: number) => {
     if (!canAttach) return
