@@ -9,11 +9,13 @@ from netherbrain.api.deps import build_registry
 from netherbrain.config import Settings
 from netherbrain.providers import OllamaProvider, ProviderError
 from netherbrain.providers.filters import is_free_openrouter_model, is_groq_chat_model
+from netherbrain.providers.llamacpp import describe_with_properties, read_properties
 from netherbrain.providers.ollama import native_message
 from netherbrain.providers.openai_compatible import describe_error, openai_message
 from netherbrain.schemas import (
     ChatMessage,
     ImageInput,
+    ModelCard,
     ReasoningEvent,
     TokenEvent,
     ToolCallEvent,
@@ -263,3 +265,50 @@ def test_images_travel_in_the_format_of_each_api():
         "role": "user",
         "content": "salut",
     }
+
+
+# --- llama.cpp : un serveur local pour les modèles qu'Ollama ne lit pas ---
+
+
+def test_llamacpp_reads_what_the_server_says_of_its_model():
+    properties = {
+        "model_path": "/models/Ternary-Bonsai-2-27B-PQ2_0.gguf",
+        "default_generation_settings": {"n_ctx": 32768},
+        "modalities": {"vision": True, "audio": False},
+        "chat_template": "{% if tools %}…{% endif %}{% if enable_thinking %}<think>{% endif %}",
+    }
+    card = ModelCard(id="bonsai", provider="llamacpp", local=True, name="bonsai")
+
+    described = describe_with_properties(card, properties)
+
+    assert described.name == "Ternary-Bonsai-2-27B-PQ2_0"
+    assert described.capabilities == ["reasoning", "tools", "vision"]
+    assert (described.context_length, described.parameters_b) == (32768, 27.0)
+
+
+def test_llamacpp_keeps_the_model_usable_without_its_details():
+    card = ModelCard(id="bonsai", provider="llamacpp", local=True, name="bonsai")
+
+    described = describe_with_properties(card, {})
+
+    assert (described.name, described.capabilities) == ("bonsai", [])
+    assert described.context_length is None
+
+
+def test_llamacpp_properties_are_optional():
+    properties = {"model_path": "/models/m.gguf", "modalities": {"vision": False}}
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=properties))
+
+    assert asyncio.run(read_properties("http://llama.test:8080", transport=transport)) == properties
+    # Serveur d'une version plus ancienne, sans /props : le modèle reste utilisable.
+    down = httpx.MockTransport(lambda request: httpx.Response(404))
+    assert asyncio.run(read_properties("http://llama.test:8080", transport=down)) == {}
+
+
+def test_llamacpp_is_enabled_by_its_url():
+    settings = make_settings(llamacpp_base_url="http://localhost:8080/v1")
+
+    registry = build_registry(settings)
+
+    assert registry.names == ["ollama", "llamacpp"]
+    assert build_registry(make_settings()).names == ["ollama"]

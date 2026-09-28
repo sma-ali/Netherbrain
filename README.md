@@ -32,6 +32,7 @@ Développement en cours. Jalon actuel : **un agent de code sûr et lisible**.
 - [x] Dossier de travail dédié, seul monté dans Docker ; commandes de l'agent sans les secrets
 - [x] Une adresse par conversation (`/c/<id>`) : rechargement, favoris, précédent / suivant
 - [x] Git pour l'agent : état, diff, historique, et commits sur autorisation, avec le diff de chaque fichier
+- [x] Fournisseur llama.cpp : les modèles locaux qu'Ollama ne sait pas lire (GGUF ternaires…)
 
 ## Architecture
 
@@ -311,6 +312,25 @@ gardées en base : chaque message renvoie l'historique au modèle, images compri
   existent, sans prétendre les voir.
 - Chaque image coûte des centaines de tokens : seules les 8 plus récentes partent
   (`NETHERBRAIN_MAX_IMAGES_SENT`).
+
+## Modèles servis par llama.cpp
+
+Ollama ne lit que les formats de GGUF présents dans llama.cpp officiel. Pour les autres (les
+quantifications ternaires, par exemple), on lance soi-même `llama-server`, qui expose la même
+API qu'OpenAI, et on donne son adresse à Netherbrain :
+
+```bash
+llama-server -m modele.gguf --mmproj mmproj.gguf --jinja -ngl 99 -fa on -c 32768 \
+  --alias mon-modele --host 127.0.0.1 --port 8080
+# puis, dans backend/.env (ou LLAMACPP_BASE_URL pour Docker) :
+NETHERBRAIN_LLAMACPP_BASE_URL=http://localhost:8080/v1
+```
+
+Le fournisseur apparaît alors à côté d'Ollama, avec ses modèles. Comme `/v1/models` ne donne
+presque rien, Netherbrain interroge `/props` : il y lit la fenêtre de contexte, la vision
+(`modalities`) et l'appel d'outils, déduit du gabarit de discussion. Sans réponse de `/props`,
+le modèle reste utilisable, simplement sans ces détails. `--jinja` est nécessaire pour que
+llama.cpp accepte les outils, et `--mmproj` pour les images.
 
 ## Comparer des modèles
 

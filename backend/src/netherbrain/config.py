@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_free_only: bool = True
+    # Serveur llama.cpp lancé à la main (llama-server), pour les modèles qu'Ollama ne sait pas
+    # lire, comme les GGUF ternaires. Vide : le fournisseur est désactivé.
+    llamacpp_base_url: str | None = None
     groq_api_key: SecretStr | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
