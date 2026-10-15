@@ -34,16 +34,19 @@ services:
       NETHERBRAIN_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       # Serveur llama.cpp lancé à la main sur l'hôte ; vide : fournisseur désactivé.
       NETHERBRAIN_LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-}
-      # Le dossier de travail (les projets), monté juste en dessous.
-      NETHERBRAIN_WORKSPACE_ROOT: /workspace
+      # Votre dossier personnel, monté juste en dessous au même chemin : les chemins sont les
+      # mêmes dans le conteneur et sur la machine, ceux que vous tapez comme ceux de l'agent.
+      NETHERBRAIN_ACCESS_ROOT: ${HOME}
+      # L'ancien dossier de travail, où sont les projets créés avant (chemins relatifs).
+      NETHERBRAIN_WORKSPACE_ROOT: ${NETHERBRAIN_WORKSPACE:-${HOME}/netherbrain-workspace}
     volumes:
-      # Le dossier de travail, et lui seul : le conteneur ne voit rien d'autre de la machine,
-      # ni vos autres projets, ni le .env et ses clés. C'est Docker qui garantit cette limite,
-      # même si le code de l'API avait un bug. En écriture, car l'agent modifie les fichiers,
-      # mais seulement après votre accord, action par action.
+      # Votre dossier personnel, et rien d'autre de la machine. En écriture, car l'agent modifie
+      # des fichiers : la limite, ce sont vos accords. L'agent lit son projet seul ; tout autre
+      # dossier, toute écriture et toute commande attend votre accord, et un fichier de secrets
+      # (.env, ~/.ssh, ~/.config/cles) le redemande à chaque fois.
       - type: bind
-        source: ${NETHERBRAIN_WORKSPACE:-~/netherbrain-workspace}
-        target: /workspace
+        source: ${HOME}
+        target: ${HOME}
         bind:
           # Dossier absent : une erreur claire, plutôt qu'un dossier créé par root, où ni vous
           # ni l'API ne pourriez écrire.

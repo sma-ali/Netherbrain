@@ -1,24 +1,29 @@
 """Les outils que le modèle peut demander : lister, lire, chercher, écrire, exécuter.
 
-Tous les chemins sont confinés au dossier du projet par `Workspace`, la même garde que
-pour le navigateur de dossiers : ni « .. », ni chemin absolu, ni lien symbolique n'en sort.
+Le projet est le seul dossier ouvert d'office. Un chemin absolu (ou commençant par « ~ »)
+peut viser un autre dossier du dossier atteignable, mais seulement avec l'accord de
+l'utilisateur : `Toolbox.access` dit quel accord il faut, et `Toolbox.run` refuse tout chemin
+hors des dossiers autorisés pour cet appel. Ni « .. », ni lien symbolique ne contourne cette
+garde : les chemins sont résolus avant d'être comparés.
 """
 
 import os
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import anyio
 
 from netherbrain.agent.diff import make_diff
 from netherbrain.agent.environment import command_environment
 from netherbrain.agent.git import GitError, is_git_repository, parse_diff, run_git
-from netherbrain.projects.workspace import Workspace, WorkspaceError
+from netherbrain.projects.workspace import Workspace, WorkspaceError, is_sensitive
 from netherbrain.schemas import FileDiff
+
+T = TypeVar("T")
 
 # Dossiers sans intérêt pour l'agent, qui feraient surtout exploser les listings.
 IGNORED = frozenset(
@@ -34,6 +39,10 @@ IGNORED = frozenset(
 )
 
 
+# Les outils qui visent un chemin, et peuvent donc sortir du projet avec l'accord de l'utilisateur.
+PATH_TOOLS = frozenset({"list_files", "read_file", "search_files", "write_file", "edit_file"})
+
+
 class ToolError(Exception):
     """Un outil n'a pas pu faire ce qu'on lui demandait ; le message part au modèle."""
 
@@ -42,6 +51,17 @@ class ToolError(Exception):
 class ToolResult:
     output: str
     error: bool = False
+
+
+@dataclass(frozen=True)
+class Access:
+    """L'accord qu'un appel demande, en plus de celui de l'outil lui-même."""
+
+    # Le dossier à ouvrir, hors du projet : celui que « toute la conversation » autoriserait.
+    # None quand le chemin est déjà dans le projet ou dans un dossier autorisé.
+    folder: Path | None
+    # Un fichier de secrets : l'accord ne vaut que pour cet appel, jamais pour la suite.
+    sensitive: bool
 
 
 def _schema(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -58,6 +78,7 @@ def _schema(name: str, description: str, properties: dict, required: list[str]) 
 
 STRING = {"type": "string"}
 INTEGER = {"type": "integer"}
+OUTSIDE = " Outside the project: an absolute path or ~/..., which asks the user for access."
 
 # Proposés seulement dans un dépôt Git, quand git est installé.
 GIT_TOOLS = frozenset({"git_status", "git_diff", "git_log", "git_commit"})
@@ -73,14 +94,19 @@ SCHEMAS = [
     _schema(
         "list_files",
         "List the files and folders of the project, recursively.",
-        {"path": {**STRING, "description": "Folder, relative to the project root. Default: '.'"}},
+        {
+            "path": {
+                **STRING,
+                "description": "Folder, relative to the project root. Default: '.'." + OUTSIDE,
+            }
+        },
         [],
     ),
     _schema(
         "read_file",
         "Read a text file of the project. The answer is numbered, like `cat -n`.",
         {
-            "path": {**STRING, "description": "File, relative to the project root."},
+            "path": {**STRING, "description": "File, relative to the project root." + OUTSIDE},
             "offset": {**INTEGER, "description": "First line to read (1 by default)."},
             "limit": {**INTEGER, "description": "How many lines to read (400 by default)."},
         },
@@ -91,21 +117,28 @@ SCHEMAS = [
         "Search a regular expression in the project's text files, like grep.",
         {
             "pattern": {**STRING, "description": "Python regular expression."},
-            "path": {**STRING, "description": "Folder to search in. Default: '.'"},
+            "path": {**STRING, "description": "Folder to search in. Default: '.'." + OUTSIDE},
         },
         ["pattern"],
     ),
     _schema(
         "write_file",
         "Create a file or replace its whole content. Asks the user for permission.",
-        {"path": STRING, "content": STRING},
+        {
+            "path": {**STRING, "description": "Relative to the project root." + OUTSIDE},
+            "content": STRING,
+        },
         ["path", "content"],
     ),
     _schema(
         "edit_file",
         "Replace one exact excerpt of a file, which must appear exactly once. "
         "Asks the user for permission.",
-        {"path": STRING, "old_string": STRING, "new_string": STRING},
+        {
+            "path": {**STRING, "description": "Relative to the project root." + OUTSIDE},
+            "old_string": STRING,
+            "new_string": STRING,
+        },
         ["path", "old_string", "new_string"],
     ),
     _schema(
@@ -161,23 +194,31 @@ SCHEMAS = [
 
 
 class Toolbox:
-    """Les outils d'un projet donné, tous confinés à son dossier."""
+    """Les outils d'un projet donné : son dossier, et ceux que l'utilisateur ouvre en plus."""
 
     # Ceux qui modifient quelque chose : ils demandent l'accord de l'utilisateur.
     APPROVAL_NEEDED = frozenset({"write_file", "edit_file", "run_command", "git_commit"})
+    # Une commande peut tout lire (cat ~/.ssh/id_rsa) : jamais d'accord pour la suite.
+    ASK_EVERY_TIME = frozenset({"run_command"})
 
     def __init__(
         self,
         folder: Path,
         *,
+        reach: Path | None = None,
         max_output_chars: int = 8000,
         max_entries: int = 400,
         command_timeout: int = 120,
         allow_commands: bool = True,
     ) -> None:
-        # Le dossier du projet devient la racine : la même classe qui empêche de sortir
-        # du dossier de travail empêche ici de sortir du projet.
+        # Le dossier du projet : Git et les chemins relatifs partent de là.
         self._files = Workspace(folder)
+        # Le dossier atteignable (votre dossier personnel), au-delà duquel aucun accord ne
+        # mène. Sans lui, c'est le projet seul : rien ne peut en sortir.
+        reach = (reach or folder).expanduser().resolve()
+        self._reach = reach if self._files.root.is_relative_to(reach) else self._files.root
+        # Les dossiers ouverts pour l'appel en cours : le projet, et ceux qu'on a autorisés.
+        self._roots: tuple[Path, ...] = (self._files.root,)
         self._max_output = max_output_chars
         self._max_entries = max_entries
         self._command_timeout = command_timeout
@@ -189,6 +230,10 @@ class Toolbox:
         return self._files.root
 
     @property
+    def reach(self) -> Path:
+        return self._reach
+
+    @property
     def schemas(self) -> list[dict[str, Any]]:
         """Les outils proposés au modèle : sans run_command si les commandes sont coupées, sans
         ceux de Git hors d'un dépôt."""
@@ -197,12 +242,60 @@ class Toolbox:
         )
         return [schema for schema in SCHEMAS if schema["function"]["name"] not in hidden]
 
+    def asks_every_time(self, name: str) -> bool:
+        return name in self.ASK_EVERY_TIME
+
     def needs_approval(self, name: str) -> bool:
         # Un outil indisponible est refusé d'office : inutile de déranger l'utilisateur.
         return name in self.APPROVAL_NEEDED and name in self._available()
 
     def _available(self) -> set[str]:
         return {schema["function"]["name"] for schema in self.schemas}
+
+    def access(
+        self, name: str, arguments: dict[str, Any], granted: Iterable[Path] = ()
+    ) -> Access | None:
+        """L'accord que demande ce chemin, en plus de celui de l'outil ; None s'il n'en faut pas.
+
+        Il en faut un hors du projet et des dossiers déjà autorisés (`granted`), et pour tout
+        fichier de secrets. Un chemin invalide ou hors d'atteinte ne demande rien : l'exécution
+        le refusera, avec son explication.
+        """
+        if name == "git_commit" and name in self._available():
+            # git add --all embarquerait un .env que le .gitignore oublie : à signaler.
+            return Access(folder=None, sensitive=True) if self._commits_a_secret() else None
+        path = arguments.get("path", ".")
+        if name not in PATH_TOOLS or name not in self._available() or not isinstance(path, str):
+            return None
+        try:
+            target = self._locate(path)
+        except ToolError:
+            return None
+        sensitive = is_sensitive(target, self._reach)
+        inside = any(target.is_relative_to(root) for root in (self.folder, *granted))
+        if inside and not sensitive:
+            return None
+        return Access(folder=None if inside else self._folder_to_open(target), sensitive=sensitive)
+
+    def _folder_to_open(self, target: Path) -> Path:
+        """Le dossier à autoriser pour atteindre `target` : son dépôt Git s'il est dans l'un
+        (on y travaille rarement sur un seul fichier), sinon le dossier qui le contient.
+
+        Jamais le dossier atteignable lui-même, sauf pour un chemin qui y mène directement
+        (~ ou ~/.bashrc) : il ouvrirait tout, et l'accord ne vaut alors que cette fois.
+        """
+        folder = target if target.is_dir() else target.parent
+        while not folder.exists() and folder != self._reach:
+            folder = folder.parent  # un fichier à créer dans un dossier qui n'existe pas encore
+        for candidate in (folder, *folder.parents):
+            if candidate == self._reach or not candidate.is_relative_to(self._reach):
+                break
+            if (candidate / ".git").exists():
+                return candidate
+        if folder == self._reach and target.parent != self._reach and target != self._reach:
+            # ~/notes/2026/idees.md, notes n'existant pas encore : on ouvre ~/notes.
+            return self._reach / target.relative_to(self._reach).parts[0]
+        return folder
 
     def describe(self, name: str, arguments: dict[str, Any]) -> str:
         """Résumé court d'un appel, affiché dans l'interface : `read_file(src/api.ts)`."""
@@ -229,7 +322,19 @@ class Toolbox:
         """
         return await anyio.to_thread.run_sync(lambda: self._preview(name, arguments))
 
+    def _with_roots(self, roots: tuple[Path, ...], action: Callable[[], T]) -> T:
+        previous, self._roots = self._roots, roots
+        try:
+            return action()
+        finally:
+            self._roots = previous
+
     def _preview(self, name: str, arguments: dict[str, Any]) -> list[FileDiff]:
+        # L'aperçu ne part qu'à l'utilisateur, jamais au modèle : il peut lire tout le dossier
+        # atteignable, pour montrer ce qu'une écriture hors du projet changerait.
+        return self._with_roots((self._reach,), lambda: self._previews(name, arguments))
+
+    def _previews(self, name: str, arguments: dict[str, Any]) -> list[FileDiff]:
         if name == "git_commit":
             try:
                 return self._pending_changes() if self._git else []
@@ -238,12 +343,30 @@ class Toolbox:
         diff = self._file_preview(name, arguments)
         return [diff] if diff else []
 
+    def _commits_a_secret(self) -> bool:
+        try:
+            changed = self._run_git("status", "--porcelain", "-z", "--untracked-files=all")
+        except ToolError:
+            return False
+        # -z : « XY chemin », puis l'ancien nom après un renommage, qu'on vérifie aussi.
+        paths = [entry[3:] if entry[2:3] == " " else entry for entry in changed.split("\0")]
+        return any(self._is_secret(path) for path in paths if path)
+
+    def _is_secret(self, path: str) -> bool:
+        return is_sensitive(self._files.root / path, self._reach)
+
     def _pending_changes(self) -> list[FileDiff]:
-        """Ce qu'un commit de tout le projet enregistrerait : fichiers suivis, puis nouveaux."""
+        """Ce qu'un commit de tout le projet enregistrerait : fichiers suivis, puis nouveaux.
+        Un fichier de secrets y figure, sans son contenu."""
         has_head = self._git_quiet("rev-parse", "--verify", "--quiet", "HEAD")
-        diffs = parse_diff(
-            self._run_git("diff", "HEAD" if has_head else "--cached", "--no-color", "--no-ext-diff")
-        )
+        diffs = [
+            diff.model_copy(update={"lines": []}) if self._is_secret(diff.path) else diff
+            for diff in parse_diff(
+                self._run_git(
+                    "diff", "HEAD" if has_head else "--cached", "--no-color", "--no-ext-diff"
+                )
+            )
+        ]
         untracked = self._run_git("ls-files", "--others", "--exclude-standard", "-z")
         for path in [path for path in untracked.split("\0") if path]:
             if len(diffs) >= MAX_PREVIEW_FILES:
@@ -255,6 +378,8 @@ class Toolbox:
         # resolve() : un lien symbolique non suivi par Git ne doit pas faire lire l'extérieur.
         file = self._files.resolve(path)
         empty = FileDiff(path=path, created=True, added=0, removed=0, lines=[])
+        if self._is_secret(path):
+            return empty
         try:
             if file.stat().st_size > MAX_PREVIEW_BYTES:
                 return empty
@@ -269,7 +394,7 @@ class Toolbox:
         try:
             if name == "write_file":
                 new = arguments.get("content")
-                file = self._files.resolve(path)
+                file = self._resolve(path)
                 created = not file.exists()
                 if not isinstance(new, str) or file.is_dir():
                     return None
@@ -285,9 +410,20 @@ class Toolbox:
         except ToolError, WorkspaceError, OSError:
             return None
 
-    async def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Exécute l'outil dans un thread : lire un dossier ou lancer une commande bloque."""
-        return await anyio.to_thread.run_sync(lambda: self._run(name, arguments))
+    async def run(
+        self, name: str, arguments: dict[str, Any], roots: Iterable[Path] = ()
+    ) -> ToolResult:
+        """Exécute l'outil dans un thread : lire un dossier ou lancer une commande bloque.
+
+        `roots` : les dossiers hors du projet que l'utilisateur a ouverts pour cet appel.
+        """
+        roots = tuple(roots)
+
+        def run() -> ToolResult:
+            opened = (self._files.root, *(Path(root).resolve() for root in roots))
+            return self._with_roots(opened, lambda: self._run(name, arguments))
+
+        return await anyio.to_thread.run_sync(run)
 
     def _run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if name == "run_command" and not self._allow_commands:
@@ -339,11 +475,11 @@ class Toolbox:
             raise ToolError(f"Invalid regular expression: {exc}") from exc
 
         hits: list[str] = []
-        for entry in self._walk(self._directory(path)):
+        for child, entry in self._entries(self._directory(path)):
             if entry.endswith("/"):
                 continue
             try:
-                text = (self._files.root / entry).read_text(encoding="utf-8")
+                text = child.read_text(encoding="utf-8")
             except OSError, UnicodeDecodeError:
                 continue  # fichier binaire ou illisible : on passe
             for number, line in enumerate(text.splitlines(), start=1):
@@ -354,7 +490,7 @@ class Toolbox:
         return "\n".join(hits) or "No match."
 
     def _write_file(self, path: str, content: str) -> str:
-        file = self._files.resolve(path)
+        file = self._resolve(path)
         if file.is_dir():
             raise ToolError(f"{path} is a folder")
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -383,7 +519,16 @@ class Toolbox:
         arguments = ["diff", "--no-color", "--no-ext-diff"]
         if staged:
             arguments.append("--staged")
-        return self._run_git(*arguments, "--", target).strip() or "No changes."
+        # Le contenu d'un fichier de secrets n'arrive jamais au modèle, même suivi par Git.
+        # --relative : des noms relatifs au projet, même s'il n'est qu'un sous-dossier du dépôt.
+        listed = self._run_git(*arguments, "--name-only", "--relative", "-z", "--", target)
+        changed = [name for name in listed.split("\0") if name]
+        secrets = [name for name in changed if self._is_secret(name)]
+        kept = [f":(literal){name}" for name in changed if name not in secrets]
+        diff = self._run_git(*arguments, "--", *kept).strip() if kept else ""
+        if secrets:
+            diff += f"\n(secret files left out: {', '.join(secrets)})"
+        return diff.strip() or "No changes."
 
     def _git_log(self, limit: int = 10) -> str:
         count = max(1, min(limit, 50)) if isinstance(limit, int) else 10
@@ -437,7 +582,13 @@ class Toolbox:
     # --- Outillage interne ---
 
     def _walk(self, folder: Path) -> Iterator[str]:
-        """Les chemins du dossier, en profondeur, sans les dossiers cachés ni les IGNORED."""
+        return (entry for _, entry in self._entries(folder))
+
+    def _entries(self, folder: Path, seen: set[Path] | None = None) -> Iterator[tuple[Path, str]]:
+        """(chemin, nom affiché) des fichiers du dossier, en profondeur, sans les dossiers
+        cachés, les IGNORED ni les secrets : lister ou fouiller ne les lit jamais."""
+        # Les dossiers déjà parcourus : un lien qui pointe vers un parent tournerait sans fin.
+        seen = seen if seen is not None else {folder.resolve()}
         try:
             children = sorted(folder.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower()))
         except OSError:
@@ -445,21 +596,61 @@ class Toolbox:
         for child in children:
             if child.name.startswith(".") or child.name in IGNORED:
                 continue
-            relative = child.relative_to(self._files.root).as_posix()
+            if is_sensitive(child.resolve(), self._reach):
+                continue
+            shown = self._display(child)
             if child.is_dir():
-                yield f"{relative}/"
-                yield from self._walk(child)
-            elif child.is_file():
-                yield relative
+                real = child.resolve()
+                if real in seen or (child.is_symlink() and not self._is_open(real)):
+                    continue  # un lien vers un dossier fermé, ou déjà vu : on ne le suit pas
+                seen.add(real)
+                yield child, f"{shown}/"
+                yield from self._entries(child, seen)
+            elif child.is_file() and self._is_open(child.resolve()):
+                yield child, shown
+
+    def _display(self, path: Path) -> str:
+        """Relatif au projet quand il y est, absolu sinon : réutilisable tel quel par le modèle."""
+        if path.is_relative_to(self._files.root):
+            return path.relative_to(self._files.root).as_posix()
+        return path.as_posix()
+
+    def _locate(self, path: str) -> Path:
+        """Le chemin résolu, relatif au projet ou absolu (« ~ » : le dossier atteignable),
+        garanti dans le dossier atteignable, mais pas forcément ouvert."""
+        if path == "~" or path.startswith("~/"):
+            candidate = self._reach / path[2:]
+        else:
+            candidate = self._files.root / path  # un chemin absolu remplace la racine
+        try:
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ToolError(f"Cannot resolve {path}: {exc}") from exc
+        if not resolved.is_relative_to(self._reach):
+            raise ToolError(f"{path} is outside the folders the agent can reach")
+        return resolved
+
+    def _resolve(self, path: str) -> Path:
+        """Comme `_locate`, mais le chemin doit être dans un dossier ouvert pour cet appel."""
+        resolved = self._locate(path)
+        if not self._is_open(resolved):
+            raise ToolError(f"{path} is outside the project, and the user has not opened it")
+        return resolved
+
+    def _is_open(self, path: Path) -> bool:
+        return any(path.is_relative_to(root) for root in self._roots)
 
     def _file(self, path: str) -> Path:
-        file = self._files.resolve(path)
+        file = self._resolve(path)
         if not file.is_file():
             raise ToolError(f"File not found: {path}")
         return file
 
     def _directory(self, path: str) -> Path:
-        return self._files.directory(path or ".")
+        folder = self._resolve(path or ".")
+        if not folder.is_dir():
+            raise ToolError(f"Folder not found: {path}")
+        return folder
 
     def _text(self, file: Path) -> str:
         try:

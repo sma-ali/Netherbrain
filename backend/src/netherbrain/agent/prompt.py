@@ -4,6 +4,9 @@
 INSTRUCTIONS = """You can explore and change this project with your tools. Rules:
 - Read before you write: never guess what a file contains.
 - Use paths relative to the project's root, and keep your changes minimal.
+- To reach another folder of the user's (another repository, for instance), use its absolute
+  path or ~/...: the user is asked to open it first. Secret files (.env, ~/.ssh...) always
+  ask again.
 - edit_file replaces one exact excerpt, which must appear only once in the file;
   write_file replaces a whole file.
 - The tools that change something ask the user for permission: a refusal is normal,

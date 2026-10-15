@@ -194,6 +194,9 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
                   question: event.question,
                   options: event.options,
                   diffs: event.diffs,
+                  folder: event.folder,
+                  sensitive: event.sensitive,
+                  once_only: event.once_only,
                 }),
               }))
               break

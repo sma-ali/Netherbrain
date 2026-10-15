@@ -40,7 +40,7 @@ Développement en cours. Jalon actuel : **un agent de code sûr et lisible**.
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
                                         ├──SQLAlchemy──> PostgreSQL + pgvector (historique, fichiers joints)
-                                        └──outils de l'agent──> dossier de travail (~/netherbrain-workspace)
+                                        └──outils de l'agent──> votre dossier personnel (avec votre accord)
 ```
 
 | Dossier     | Stack                                                                            |
@@ -168,27 +168,21 @@ Dans une conversation de projet, le modèle reçoit en message système le nom d
 contenu de la racine de son dossier et ses consignes : le fichier `AGENTS.md` (format ouvert,
 partagé par plusieurs outils de code) ou, à défaut, `CLAUDE.md`.
 
-Les projets sont choisis dans un **dossier de travail dédié**, `~/netherbrain-workspace` par
-défaut (`NETHERBRAIN_WORKSPACE_ROOT`) : chaque sous-dossier peut devenir un projet. On y met ce
-que l'agent a le droit de toucher, et rien d'autre : pas tous ses projets, et surtout pas un
-dossier qui contient des secrets. L'API n'accède jamais à rien en dehors : les chemins reçus
-sont résolus (`..`, liens symboliques compris) puis vérifiés. Supprimer un projet garde ses
-conversations et ne touche jamais au dossier.
+Un projet peut être **n'importe quel dossier de votre dossier personnel**
+(`NETHERBRAIN_ACCESS_ROOT`, `~` par défaut), comme dans Claude Code : rien à copier ni à
+cloner. Avant de l'ajouter, une étape demande d'**approuver le dossier** et rappelle ce que
+l'agent pourra y faire seul. L'API n'accède jamais à rien au-delà du dossier personnel : les
+chemins reçus sont résolus (`..`, liens symboliques compris) puis vérifiés. Supprimer un projet
+garde ses conversations et ne touche jamais au dossier.
 
-Avec Docker, **seul ce dossier** est monté dans le conteneur de l'API, sur `/workspace`
-(variable `NETHERBRAIN_WORKSPACE`). La limite ne dépend alors plus du code de l'API : le reste
-de la machine n'existe pas pour le conteneur. Le dossier doit exister avant le démarrage
-(sinon Docker le créerait en root, sans droit d'écriture) :
+Avec Docker, le dossier personnel est monté dans le conteneur de l'API **au même chemin** que
+sur la machine : `/home/moi/Projects/heretic` désigne le même dossier des deux côtés. Rien
+d'autre de la machine n'y est visible. Les projets créés avant ce changement, dans l'ancien
+dossier de travail (`NETHERBRAIN_WORKSPACE_ROOT`, `~/netherbrain-workspace`), continuent de
+marcher, à condition que ce dossier soit dans le dossier personnel : seul celui-ci est monté.
 
-```bash
-mkdir -p ~/netherbrain-workspace
-docker compose up --build
-```
-
-Sous WSL, il s'ouvre depuis l'Explorateur Windows à l'adresse
-`\\wsl.localhost\<distribution>\home\<utilisateur>\netherbrain-workspace` : on y dépose les
-fichiers à faire modifier par l'agent. Un fichier joint au chat, lui, n'est qu'une copie, lue
-mais jamais modifiable : le navigateur n'en transmet que le contenu, pas l'emplacement.
+Un fichier joint au chat, lui, n'est qu'une copie, lue mais jamais modifiable : le navigateur
+n'en transmet que le contenu, pas l'emplacement.
 
 ## Agent de code
 
@@ -197,7 +191,21 @@ donne au modèle des outils sur le dossier du projet : `list_files`, `read_file`
 `search_files` (lecture, exécutés directement), puis `write_file`, `edit_file` et `run_command`
 (modification, **soumis à votre accord**). Chaque appel s'affiche dans la réponse avec son
 résultat repliable ; une action sensible attend un clic : « Allow once », « Always allow »
-(pour toute la conversation) ou « Deny ».
+(pour toute la conversation) ou « Deny ». `run_command` n'a jamais « Always allow » : une
+commande peut lire n'importe quel fichier, secrets compris, elle se valide donc une à une.
+
+L'agent peut aussi **sortir de son projet**, mais jamais sans vous demander. Un chemin absolu
+ou commençant par `~` (`~/Projects/heretic/README.md`) vise un autre dossier : la demande
+affiche le dossier à ouvrir, le dépôt Git entier quand il y en a un, et propose « Allow once »,
+« Open heretic for this conversation » ou « Deny ». Une fois ouvert, le dossier se lit comme le
+projet ; y écrire demande toujours votre accord. Le dossier personnel entier ne s'ouvre jamais
+pour la conversation, seulement pour un appel. Les **fichiers de secrets** se redemandent à
+chaque fois, même dans un dossier ouvert : `.env`, clés privées (`id_ed25519`, `*.pem`…),
+`~/.ssh`, `~/.config/cles`, `~/.aws`, `~/.claude`, `~/.kube`, `.npmrc`, historiques du shell,
+et les fichiers qui feraient exécuter du code (`~/.bashrc`, `.git/hooks`, `.git/config`).
+`list_files` et `search_files` ne les lisent jamais, `git_diff` les laisse de côté, et un commit
+qui embarquerait un `.env` oublié par le `.gitignore` le signale, sans montrer son contenu.
+Les dossiers ouverts sont oubliés au redémarrage de l'API.
 
 Avant d'autoriser une écriture, on voit **exactement ce qui va changer** : un diff façon
 `git diff`, lignes retirées en rouge, ajoutées en vert, numérotées, avec 3 lignes de contexte.
@@ -216,8 +224,9 @@ une configuration neutre et **sans les hooks du dépôt** : un dépôt piégé n
 code au moment d'un commit. Ni push, ni checkout, ni reset : l'agent enregistre, vous décidez
 du reste.
 
-Pour faire travailler l'agent sur un de vos dépôts sans lui ouvrir le vrai, clonez-le dans le
-dossier de travail, sur une branche à lui, puis récupérez son travail comme celui d'un collègue :
+Pour faire travailler l'agent sur un de vos dépôts sans toucher au vrai, clonez-le à côté,
+sur une branche à lui, faites du clone un projet, puis récupérez son travail comme celui d'un
+collègue :
 
 ```bash
 git clone ~/Projects/mon-app ~/netherbrain-workspace/mon-app
@@ -225,10 +234,6 @@ git -C ~/netherbrain-workspace/mon-app switch -c agent
 # plus tard, depuis le vrai dépôt :
 git -C ~/Projects/mon-app pull ~/netherbrain-workspace/mon-app agent
 ```
-
-Le clone ne contient que les fichiers suivis par Git : ni `.env`, ni `node_modules`. (Un
-`git worktree` ne marche pas dans Docker : son dossier `.git` pointe vers le dépôt d'origine,
-que le conteneur ne voit pas.)
 
 ```
 Question → le modèle demande un outil → autorisation si nécessaire → exécution dans le dossier
@@ -402,7 +407,7 @@ ou en sélectionner plusieurs pour les comparer.
 | POST    | `/api/projects` | Crée un projet à partir d'un dossier (`{path, name}`)   |
 | GET     | `/api/projects/{id}` | Un projet                                          |
 | DELETE  | `/api/projects/{id}` | Oublie un projet (ses conversations et son dossier restent) |
-| GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier de travail, pour choisir un projet |
+| GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier personnel, pour choisir un projet |
 | GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
 | POST    | `/api/advisor/recommend` | Recommande des modèles pour une demande (`{query}`), avec leurs raisons |
 | GET     | `/api/advisor/benchmarks` | État des benchmarks en ligne : configurés, nombre de modèles, date |

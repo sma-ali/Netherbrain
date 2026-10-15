@@ -17,6 +17,7 @@ from netherbrain.api.deps import (
     ApprovalsDep,
     DbSession,
     EmbedderDep,
+    ReachDep,
     Registry,
     SessionFactory,
     SettingsDep,
@@ -38,7 +39,7 @@ from netherbrain.db.repository import (
     make_title,
 )
 from netherbrain.projects.prompt import build_project_context
-from netherbrain.projects.workspace import Workspace
+from netherbrain.projects.workspace import Workspace, locate_project
 from netherbrain.rag.context import attachment_context
 from netherbrain.rag.images import add_images, can_read_images
 from netherbrain.schemas import (
@@ -66,13 +67,13 @@ async def get_or_404(
 
 
 async def project_of(
-    session: DbSession, conversation: Conversation, workspace: Workspace
+    session: DbSession, conversation: Conversation, reach: Workspace, workspace: Workspace
 ) -> tuple[str, Path] | None:
     """Le nom et le dossier du projet de la conversation, si son dossier existe encore."""
     if conversation.project_id is None:
         return None
     project = await ProjectRepository(session).get(conversation.project_id)
-    folder = workspace.find(project.path) if project else None
+    folder = locate_project(project.path, reach, workspace) if project else None
     return (project.name, folder) if project and folder else None
 
 
@@ -136,6 +137,7 @@ async def send_message(
     session_factory: SessionFactory,
     embedder: EmbedderDep,
     settings: SettingsDep,
+    reach: ReachDep,
     workspace: WorkspaceDep,
     approvals: ApprovalsDep,
 ) -> StreamingResponse:
@@ -178,7 +180,7 @@ async def send_message(
             vision=vision is not False,
         )
 
-    project = await project_of(session, conversation, workspace)
+    project = await project_of(session, conversation, reach, workspace)
     if request.agent and project is None:
         raise HTTPException(status_code=400, detail="Agent mode needs a conversation in a project")
 
@@ -207,6 +209,7 @@ async def send_message(
     toolbox = (
         Toolbox(
             project[1],
+            reach=reach.root,
             max_output_chars=settings.agent_max_output_chars,
             command_timeout=settings.agent_command_timeout,
             allow_commands=settings.agent_allow_commands,

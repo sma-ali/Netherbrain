@@ -202,7 +202,18 @@ async def _run_call(
             outcome, state = ToolResult(f"The user answered: {reply.answer}"), "done"
     else:
         reply = Reply("once")
-        if toolbox.needs_approval(call.name) and not approvals.allowed(conversation_id, call.name):
+        granted = approvals.folders(conversation_id)
+        # Hors du projet, ou un fichier de secrets : un accord en plus de celui de l'outil.
+        access = toolbox.access(call.name, arguments, granted)
+        tool_needed = toolbox.needs_approval(call.name) and not approvals.allowed(
+            conversation_id, call.name
+        )
+        if tool_needed or access is not None:
+            folder = access.folder if access else None
+            sensitive = access.sensitive if access else False
+            # Pas d'accord pour la suite : un secret, une commande (elle peut tout lire), ou le
+            # dossier personnel entier.
+            once_only = sensitive or toolbox.asks_every_time(call.name) or folder == toolbox.reach
             yield sse(
                 "tool_request",
                 {
@@ -212,14 +223,21 @@ async def _run_call(
                     "kind": "approval",
                     "arguments": arguments,
                     **({"diffs": [diff.model_dump() for diff in diffs]} if diffs else {}),
+                    **({"folder": str(folder)} if folder else {}),
+                    **({"sensitive": True} if sensitive else {}),
+                    **({"once_only": True} if once_only else {}),
                 },
             )
             # Sans réponse à temps, c'est un refus.
-            reply = await approvals.wait(conversation_id, call.id, call.name) or Reply("deny")
+            reply = await approvals.wait(
+                conversation_id, call.id, call.name, folder=folder, once_only=once_only
+            ) or Reply("deny")
+            if folder is not None and reply.decision in ("once", "always"):
+                granted = [*granted, folder]  # ouvert au moins pour cet appel
         if reply.decision not in ("once", "always"):
             outcome, state = ToolResult("The user refused this action.", error=True), "denied"
         else:
-            outcome = await toolbox.run(call.name, arguments)
+            outcome = await toolbox.run(call.name, arguments, granted)
             state = "error" if outcome.error else "done"
 
     step = {

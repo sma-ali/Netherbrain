@@ -57,7 +57,7 @@ def build_project_context(name: str, folder: Path, agent: bool = False) -> str:
     Avec `agent`, le modèle dispose d'outils pour lire et modifier le dossier.
     """
     parts = [
-        f'The user is working on the project "{name}". '
+        f'The user is working on the project "{name}", in {folder}. '
         f"Top-level content of its folder:\n{list_root(folder)}"
     ]
     if instructions := read_instructions(folder):

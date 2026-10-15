@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronRight, Folder, FolderGit2, Loader2 } from "lucide-react"
+import { ChevronRight, Folder, FolderGit2, Loader2, ShieldCheck } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -22,7 +22,7 @@ interface AddProjectDialogProps {
   onCreated: (project: Project) => void
 }
 
-/** Choisir un dossier du dossier de travail, et en faire un projet. */
+/** Choisir un dossier de votre dossier personnel, l'approuver, et en faire un projet. */
 export function AddProjectDialog({ open, onOpenChange, onCreated }: AddProjectDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -35,13 +35,15 @@ export function AddProjectDialog({ open, onOpenChange, onCreated }: AddProjectDi
 }
 
 function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void }) {
-  // Le dossier ouvert, relatif au dossier de travail ("" : la racine).
+  // Le dossier ouvert, relatif au dossier atteignable ("" : votre dossier personnel).
   const [path, setPath] = useState("")
   const [listing, setListing] = useState<DirectoryListing | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [name, setName] = useState("")
   const [createError, setCreateError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  // Seconde étape, comme dans Claude Code : approuver le dossier avant d'en faire un projet.
+  const [confirming, setConfirming] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -60,6 +62,7 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
 
   const navigate = (next: string) => {
     setPath(next)
+    setConfirming(false)
     setName("")
     setListError(null)
     setCreateError(null)
@@ -76,13 +79,26 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
     }
   }
 
+  if (confirming && listing) {
+    return (
+      <TrustStep
+        folder={path ? `${listing.root.replace(/\/$/, "")}/${path}` : listing.root}
+        name={name.trim() || folderName}
+        creating={creating}
+        error={createError}
+        onBack={() => setConfirming(false)}
+        onTrust={create}
+      />
+    )
+  }
+
   return (
     <>
       <DialogHeader>
         <DialogTitle>Add a project</DialogTitle>
         <DialogDescription>
-          Pick a folder in your workspace, the only place the agent can reach. Its conversations
-          will know the project and follow its AGENTS.md or CLAUDE.md.
+          Pick any folder of your home folder. Its conversations will know the project and follow
+          its AGENTS.md or CLAUDE.md.
         </DialogDescription>
       </DialogHeader>
 
@@ -91,7 +107,7 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
         className="flex flex-wrap items-center gap-0.5 font-mono text-xs"
       >
         <Crumb onClick={() => navigate("")} current={path === ""}>
-          {listing ? basename(listing.root) : "workspace"}
+          ~
         </Crumb>
         {breadcrumbs(path).map((crumb) => (
           <Fragment key={crumb.path}>
@@ -113,9 +129,7 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
           </p>
         ) : listing.directories.length === 0 ? (
           <p className="p-3 text-muted-foreground">
-            {path === ""
-              ? "Your workspace is empty. Create a folder in it on your computer, put the files the agent may change inside, then come back."
-              : "No subfolders."}
+            No subfolders.
           </p>
         ) : (
           <ul className="p-1">
@@ -153,9 +167,55 @@ function FolderBrowser({ onCreated }: { onCreated: (project: Project) => void })
       {createError && <p className="text-destructive">{createError}</p>}
 
       <DialogFooter>
-        <Button onClick={create} disabled={!path || loading || creating}>
-          {creating && <Loader2 className="animate-spin" />}
+        <Button onClick={() => setConfirming(true)} disabled={!path || loading}>
           {folderName ? `Add “${folderName}”` : "Open a folder"}
+        </Button>
+      </DialogFooter>
+    </>
+  )
+}
+
+/** Approuver le dossier : ce que l'agent pourra y faire seul, et ce qu'il vous demandera. */
+function TrustStep({
+  folder,
+  name,
+  creating,
+  error,
+  onBack,
+  onTrust,
+}: {
+  folder: string
+  name: string
+  creating: boolean
+  error: string | null
+  onBack: () => void
+  onTrust: () => void
+}) {
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <ShieldCheck className="size-5 text-primary" />
+          Do you trust this folder?
+        </DialogTitle>
+        <DialogDescription className="font-mono text-xs break-all">{folder}</DialogDescription>
+      </DialogHeader>
+
+      <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm">
+        <li>In “{name}”, the agent reads and searches files without asking.</li>
+        <li>Writing a file, running a command or committing always asks you first.</li>
+        <li>Any other folder of yours asks you first, once or for the whole conversation.</li>
+        <li>Secret files (.env, ~/.ssh, ~/.config/cles) ask every time.</li>
+      </ul>
+      {error && <p className="text-destructive">{error}</p>}
+
+      <DialogFooter>
+        <Button variant="ghost" onClick={onBack} disabled={creating}>
+          Back
+        </Button>
+        <Button onClick={onTrust} disabled={creating}>
+          {creating && <Loader2 className="animate-spin" />}
+          Trust and add
         </Button>
       </DialogFooter>
     </>

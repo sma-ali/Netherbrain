@@ -77,6 +77,14 @@ export interface AgentStep {
   kind?: "approval" | "question"
   question?: string
   options?: string[]
+  // Le dossier hors du projet que l'appel veut ouvrir (chemin absolu) : « always » l'ouvre
+  // pour toute la conversation.
+  folder?: string
+  // Un fichier de secrets (à lire, ou embarqué par un commit).
+  sensitive?: boolean
+  // L'accord ne vaut que cette fois, « always » n'est pas proposé : un secret, une commande
+  // (elle peut tout lire), ou le dossier personnel entier.
+  once_only?: boolean
   // Ce que l'action change, fichier par fichier, à relire avant d'autoriser : un fichier pour
   // write_file et edit_file, tous ceux du commit pour git_commit.
   diffs?: FileDiff[] | null
@@ -102,6 +110,9 @@ export type ChatEvent =
       question?: string
       options?: string[]
       diffs?: FileDiff[]
+      folder?: string
+      sensitive?: boolean
+      once_only?: boolean
     }
   | {
       type: "tool_result"
@@ -252,9 +263,9 @@ export interface FolderInfo {
 }
 
 export interface DirectoryListing {
-  // Le dossier de travail, tel que le voit le serveur (/workspace dans Docker).
+  // Le dossier atteignable (votre dossier personnel), tel que le voit le serveur.
   root: string
-  // Le dossier listé, relatif au dossier de travail ("" pour la racine).
+  // Le dossier listé, relatif au dossier atteignable ("" pour la racine).
   path: string
   parent: string | null
   directories: FolderInfo[]
@@ -432,7 +443,8 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   return response.json()
 }
 
-/** Crée un projet à partir d'un dossier ; son nom par défaut est celui du dossier. */
+/** Crée un projet à partir d'un dossier, relatif au dossier atteignable ; son nom par défaut
+ * est celui du dossier. */
 export async function createProject(path: string, name?: string): Promise<Project> {
   const response = await request("/api/projects", {
     method: "POST",
@@ -447,7 +459,7 @@ export async function deleteProject(id: string): Promise<void> {
   await request(`/api/projects/${id}`, { method: "DELETE" })
 }
 
-/** Les sous-dossiers de `path` dans le dossier de travail ("" pour la racine). */
+/** Les sous-dossiers de `path` dans le dossier atteignable ("" pour la racine). */
 export async function listDirectories(
   path: string,
   signal?: AbortSignal,

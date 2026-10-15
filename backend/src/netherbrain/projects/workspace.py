@@ -1,8 +1,10 @@
-"""Le dossier de travail : là où vivent les projets, et d'où l'on ne sort jamais.
+"""Les dossiers que l'application peut atteindre, et d'où l'on ne sort jamais.
 
-Tous les chemins venus de l'extérieur (le navigateur, et bientôt le modèle) sont relatifs à
-ce dossier. `Workspace.resolve` garantit qu'aucun ne permet d'en sortir : ni avec « .. », ni
-avec un chemin absolu, ni en passant par un lien symbolique.
+`Workspace` confine des chemins relatifs à une racine : ni « .. », ni chemin absolu, ni lien
+symbolique n'en sort. Deux racines s'en servent : le dossier atteignable (votre dossier
+personnel, NETHERBRAIN_ACCESS_ROOT), où l'on choisit un projet et où l'agent peut demander
+l'accès à un dossier ; et l'ancien dossier de travail, base des chemins relatifs des projets
+créés avant que les projets puissent être n'importe où.
 """
 
 from dataclasses import dataclass
@@ -11,6 +13,51 @@ from pathlib import Path
 # Fichiers de consignes lus à la racine d'un projet, dans cet ordre. AGENTS.md est le format
 # ouvert partagé par plusieurs outils de code ; CLAUDE.md, celui de Claude Code.
 INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
+
+# Les dossiers de secrets, relatifs au dossier atteignable : l'agent doit demander à chaque
+# fois, même dans un dossier autorisé pour toute la conversation.
+SECRET_FOLDERS = (
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".kube",
+    ".docker",
+    ".claude",
+    ".password-store",
+    ".config/cles",
+    ".config/usine",
+    ".config/gh",
+    ".config/gcloud",
+)
+# Comparés en minuscules. Les fichiers de démarrage du shell en font partie : y écrire, c'est
+# faire exécuter une commande à la prochaine ouverture d'un terminal.
+SECRET_FILES = frozenset(
+    {
+        ".env",
+        ".netrc",
+        ".git-credentials",
+        ".pgpass",
+        ".npmrc",
+        ".pypirc",
+        ".bash_history",
+        ".zsh_history",
+        ".python_history",
+        ".bashrc",
+        ".zshrc",
+        ".profile",
+        ".bash_profile",
+        ".zprofile",
+        ".zshenv",
+    }
+)
+# Les clés privées, où qu'elles soient : id_rsa, id_ed25519… et leurs extensions habituelles.
+SECRET_PREFIXES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
+SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".jks")
+# Dans un dépôt, un hook ou la config de Git font exécuter des commandes au prochain appel.
+GIT_RUNS_CODE = ("hooks", "config")
+# Les modèles de .env ne contiennent pas de vraies clés : .env.example reste un fichier ordinaire.
+TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
 
 
 class WorkspaceError(Exception):
@@ -107,3 +154,35 @@ def instructions_file(folder: Path) -> Path | None:
         (folder / name for name in INSTRUCTION_FILES if (folder / name).is_file()),
         None,
     )
+
+
+def is_sensitive(path: Path, home: Path) -> bool:
+    """Un fichier ou dossier de secrets : un .env, une clé privée, ce qui vit dans ~/.ssh ou
+    ~/.config/cles, ou un fichier qui ferait exécuter du code (~/.bashrc, .git/hooks).
+
+    `path` et `home` sont résolus : un lien symbolique vers ~/.config/cles est démasqué.
+    """
+    name = path.name.lower()
+    if name in SECRET_FILES or name.endswith(SECRET_SUFFIXES):
+        return True
+    if name.startswith(SECRET_PREFIXES) and not name.endswith(".pub"):
+        return True
+    if name.startswith(".env.") and not name.endswith(TEMPLATE_SUFFIXES):
+        return True
+    parts = path.parts
+    if any(a == ".git" and b in GIT_RUNS_CODE for a, b in zip(parts, parts[1:], strict=False)):
+        return True
+    return any(path.is_relative_to(home / folder) for folder in SECRET_FOLDERS)
+
+
+def locate_project(stored: str, reach: Workspace, legacy: Workspace) -> Path | None:
+    """Le dossier d'un projet, ou None s'il a disparu ou n'est plus atteignable.
+
+    Un projet récent est enregistré par son chemin absolu ; un ancien, par son chemin relatif
+    à l'ancien dossier de travail.
+    """
+    path = Path(stored)
+    if not path.is_absolute():
+        return legacy.find(stored)
+    folder = path.resolve()
+    return folder if folder.is_relative_to(reach.root) and folder.is_dir() else None

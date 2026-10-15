@@ -6,11 +6,13 @@ import {
   CircleSlash,
   FilePen,
   FileText,
+  FolderOpen,
   FolderTree,
   GitBranch,
   GitCommitHorizontal,
   GitCompare,
   History,
+  KeyRound,
   Loader2,
   MessageSquare,
   Search,
@@ -28,6 +30,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input"
 import type { AgentStep, FileDiff, ToolDecision } from "@/lib/api"
 import { stepDiffs, totalChanges } from "@/lib/diff"
+import { basename } from "@/lib/projects"
 import { cn } from "@/lib/utils"
 
 const ICONS: Record<string, LucideIcon> = {
@@ -72,13 +75,19 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
           {/* Un commit montre son message puis ses fichiers ; une écriture, son seul diff. */}
           {(step.name === "git_commit" || diffs.length === 0) && <Preview step={step} />}
           {diffs.length > 0 && <DiffList diffs={diffs} />}
+          <Access step={step} />
           <div className="mt-2 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => onApprove?.(step.id, "once")}>
               Allow once
             </Button>
-            <Button size="sm" variant="outline" onClick={() => onApprove?.(step.id, "always")}>
-              Always allow {step.name}
-            </Button>
+            {/* Un secret ou une commande se redemande à chaque fois : pas d'accord pour la suite. */}
+            {!step.sensitive && !step.once_only && (
+              <Button size="sm" variant="outline" onClick={() => onApprove?.(step.id, "always")}>
+                {step.folder
+                  ? `Open ${basename(step.folder)} for this conversation`
+                  : `Always allow ${step.name}`}
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => onApprove?.(step.id, "deny")}>
               Deny
             </Button>
@@ -88,6 +97,34 @@ export function ToolStep({ step, onApprove }: ToolStepProps) {
         <Changes diffs={diffs} summary={step.output} />
       ) : (
         step.output && <Output text={step.output} failed={step.status !== "done"} />
+      )}
+    </div>
+  )
+}
+
+/** Ce que l'appel ouvre en plus du projet : un autre dossier, ou un fichier de secrets. */
+function Access({ step }: { step: AgentStep }) {
+  if (!step.folder && !step.sensitive) return null
+  return (
+    <div className="mt-2 flex flex-col gap-1 text-sm">
+      {step.folder && (
+        <p className="flex items-start gap-1.5">
+          <FolderOpen className="mt-0.5 size-4 shrink-0 text-primary" />
+          <span>
+            Outside the project: the agent asks to open{" "}
+            <code className="font-mono text-xs break-all">{step.folder}</code>
+          </span>
+        </p>
+      )}
+      {step.sensitive && (
+        <p className="flex items-start gap-1.5">
+          <KeyRound className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <span>
+            {step.name === "git_commit"
+              ? "This commit includes a secret file (not ignored by Git)."
+              : "Secret file: the agent will ask every time it wants it."}
+          </span>
+        </p>
       )}
     </div>
   )

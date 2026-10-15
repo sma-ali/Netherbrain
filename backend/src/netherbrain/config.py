@@ -66,9 +66,12 @@ class Settings(BaseSettings):
     gpu_vram_gb: float = 16
 
     # --- Projets ---
-    # Le dossier de travail : chaque projet est l'un de ses sous-dossiers, et l'application
-    # n'accède jamais à rien en dehors. Un dossier dédié plutôt que tous vos projets : l'agent
-    # n'a accès qu'à ce que vous y mettez. Dans Docker, c'est le dossier monté sur /workspace.
+    # Le dossier atteignable : un projet peut être n'importe lequel de ses sous-dossiers, et
+    # l'agent peut y demander l'accès à d'autres dossiers, toujours avec votre accord.
+    # L'application n'accède jamais à rien au-delà. Dans Docker, c'est le dossier monté.
+    access_root: Path = Path.home()
+    # L'ancien dossier de travail : les projets créés avant ce changement y sont enregistrés
+    # par un chemin relatif. Les nouveaux le sont par leur chemin absolu.
     workspace_root: Path = Path.home() / "netherbrain-workspace"
 
     # --- Agent de code ---

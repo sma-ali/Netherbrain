@@ -159,7 +159,8 @@ def test_the_loop_stops_after_too_many_steps(client, workspace, use_providers, a
         ("read_file", "{oops", "not valid JSON"),
         ("delete_everything", "{}", "Unknown tool"),
         ("read_file", '{"nope": 1}', "Bad arguments"),
-        ("read_file", '{"path": "../secret.txt"}', "outside"),
+        ("read_file", '{"path": "/etc/hostname"}', "outside"),
+        ("read_file", '{"path": "../../secret.txt"}', "outside"),
     ],
 )
 def test_a_bad_call_is_reported_to_the_model(

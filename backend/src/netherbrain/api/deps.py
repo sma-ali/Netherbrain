@@ -140,10 +140,20 @@ EmbedderDep = Annotated[Embedder, Depends(get_embedder)]
 
 @lru_cache
 def get_workspace() -> Workspace:
+    """L'ancien dossier de travail, base des chemins relatifs des premiers projets."""
     return Workspace(get_settings().workspace_root)
 
 
 WorkspaceDep = Annotated[Workspace, Depends(get_workspace)]
+
+
+@lru_cache
+def get_reach() -> Workspace:
+    """Le dossier atteignable : on y choisit un projet, l'agent y demande ses accès."""
+    return Workspace(get_settings().access_root)
+
+
+ReachDep = Annotated[Workspace, Depends(get_reach)]
 
 
 @lru_cache
