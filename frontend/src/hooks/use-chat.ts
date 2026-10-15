@@ -9,6 +9,7 @@ import {
   type AgentStep,
   type ChatEvent,
   type ChatMetrics,
+  type ConversationDetail,
   type ModelInfo,
   type Source,
   type StoredMessage,
@@ -192,7 +193,10 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
                   arguments: event.arguments,
                   question: event.question,
                   options: event.options,
-                  diff: event.diff,
+                  diffs: event.diffs,
+                  folder: event.folder,
+                  sensitive: event.sensitive,
+                  once_only: event.once_only,
                 }),
               }))
               break
@@ -202,7 +206,7 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
                   status: event.status as AgentStep["status"],
                   output: event.output,
                   // Un appel autorisé d'avance n'a pas eu de demande : le diff arrive ici.
-                  ...(event.diff ? { diff: event.diff } : {}),
+                  ...(event.diffs ? { diffs: event.diffs } : {}),
                 }),
               }))
               break
@@ -254,18 +258,22 @@ export function useChat({ persist, onSaved }: UseChatOptions) {
 
   const stop = useCallback(() => abortRef.current?.abort(), [])
 
+  /** Ouvre une conversation ; rend son contenu, ou null si elle est introuvable ou dépassée. */
   const open = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<ConversationDetail | null> => {
       abortRef.current?.abort()
       select(id)
       setMessages([])
       try {
         const conversation = await getConversation(id)
-        if (requestedRef.current === id) setMessages(conversation.messages.map(toUIMessage))
+        if (requestedRef.current !== id) return null
+        setMessages(conversation.messages.map(toUIMessage))
+        return conversation
       } catch (error) {
-        if (requestedRef.current !== id) return
+        if (requestedRef.current !== id) return null
         const message = error instanceof Error ? error.message : String(error)
         setMessages([{ id: "load-error", role: "assistant", content: "", error: message }])
+        return null
       }
     },
     [select],

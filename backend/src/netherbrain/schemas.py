@@ -251,15 +251,19 @@ class AgentStep(BaseModel):
     # done : exécuté ; error : l'outil a échoué ; denied : l'utilisateur a refusé.
     status: Literal["done", "error", "denied"]
     output: str
-    # write_file et edit_file : ce que l'écriture change (ou aurait changé, si refusée).
+    # Ce que l'action change, fichier par fichier (ou aurait changé, si elle a été refusée) :
+    # un fichier pour write_file et edit_file, tous ceux du commit pour git_commit.
+    diffs: list[FileDiff] | None = None
+    # L'ancien format, un seul fichier : les réponses enregistrées avant `diffs` le gardent.
     diff: FileDiff | None = None
 
 
 class ApprovalRequest(BaseModel):
     """La réponse de l'utilisateur à l'agent : une autorisation, ou la réponse à sa question."""
 
-    # Pour une action : once (cette fois), always (cet outil, pour toute la conversation)
-    # ou deny. Pour une question de l'agent (ask_user) : answer, avec le texte choisi.
+    # Pour une action : once (cette fois), always (pour toute la conversation : l'outil, ou
+    # le dossier hors du projet qu'il demandait) ou deny. Pour une question de l'agent
+    # (ask_user) : answer, avec le texte choisi.
     decision: Literal["once", "always", "deny", "answer"]
     answer: str | None = Field(default=None, max_length=4000)
 
@@ -310,7 +314,7 @@ class SendMessageRequest(BaseModel):
 class ProjectOut(BaseModel):
     id: uuid.UUID
     name: str
-    # Relatif au dossier de travail.
+    # Le chemin absolu du dossier (l'enregistré tel quel s'il a disparu).
     path: str
     created_at: datetime
     # False si le dossier a disparu depuis (déplacé, renommé, supprimé).
@@ -321,6 +325,7 @@ class ProjectOut(BaseModel):
 
 
 class CreateProjectRequest(BaseModel):
+    # Relatif au dossier atteignable, comme les chemins du navigateur de dossiers.
     path: str
     # Par défaut : le nom du dossier.
     name: str | None = Field(default=None, max_length=200)
@@ -335,9 +340,9 @@ class FolderInfo(BaseModel):
 
 
 class DirectoryListing(BaseModel):
-    # Le dossier de travail, tel que le voit le serveur (/workspace dans Docker).
+    # Le dossier atteignable, tel que le voit le serveur (votre dossier personnel).
     root: str
-    # Le dossier listé, relatif au dossier de travail ("" pour la racine).
+    # Le dossier listé, relatif au dossier atteignable ("" pour la racine).
     path: str
     # Le dossier parent, ou None à la racine.
     parent: str | None

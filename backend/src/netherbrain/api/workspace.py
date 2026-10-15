@@ -1,10 +1,10 @@
-"""Parcourir le dossier de travail, pour choisir le dossier d'un nouveau projet."""
+"""Parcourir le dossier atteignable, pour choisir le dossier d'un nouveau projet."""
 
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter, HTTPException
 
-from netherbrain.api.deps import WorkspaceDep
+from netherbrain.api.deps import ReachDep
 from netherbrain.projects.workspace import FolderNotFoundError, WorkspaceError
 from netherbrain.schemas import DirectoryListing, FolderInfo
 
@@ -12,8 +12,8 @@ router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 
 
 @router.get("/directories")
-async def list_directories(workspace: WorkspaceDep, path: str = "") -> DirectoryListing:
-    """Les sous-dossiers de `path`, un chemin relatif au dossier de travail ("" : la racine)."""
+async def list_directories(workspace: ReachDep, path: str = "") -> DirectoryListing:
+    """Les sous-dossiers de `path`, un chemin relatif au dossier atteignable ("" : la racine)."""
     try:
         entries = workspace.list_directories(path)
     except FolderNotFoundError as exc:

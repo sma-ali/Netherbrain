@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
-import { parseDiff } from "./diff"
+import type { FileDiff } from "./api"
+import { parseDiff, stepDiffs, totalChanges } from "./diff"
 
 describe("parseDiff", () => {
   it("numbers each line on the side where it exists", () => {
@@ -25,5 +26,27 @@ describe("parseDiff", () => {
     const rows = parseDiff(["@@ -0,0 +1,2 @@", "+first", "+second"])
 
     expect(rows.slice(1).map((row) => row.newLine)).toEqual([1, 2])
+  })
+})
+
+describe("step diffs", () => {
+  const diff = (path: string, added: number, removed: number): FileDiff => ({
+    path,
+    created: false,
+    added,
+    removed,
+    lines: [],
+    truncated: false,
+  })
+  const step = { id: "c1", name: "git_commit", summary: "", status: "done", output: "" } as const
+
+  it("reads the list, or the older single diff", () => {
+    expect(stepDiffs({ ...step, diffs: [diff("a", 1, 0)] })).toHaveLength(1)
+    expect(stepDiffs({ ...step, diff: diff("a", 1, 0) })).toEqual([diff("a", 1, 0)])
+    expect(stepDiffs(step)).toEqual([])
+  })
+
+  it("adds up the lines of every file", () => {
+    expect(totalChanges([diff("a", 3, 1), diff("b", 2, 0)])).toEqual({ added: 5, removed: 1 })
   })
 })

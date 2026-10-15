@@ -111,7 +111,8 @@ def test_a_project_is_created_from_a_folder(client, workspace):
 
     assert response.status_code == 201
     project = response.json()
-    assert (project["name"], project["path"]) == ("netherbrain", "netherbrain")
+    # Enregistré par son chemin absolu, normalisé : « apps/.. » a disparu.
+    assert (project["name"], project["path"]) == ("netherbrain", str(folder.resolve()))
     assert project["available"] is True
     assert project["git_branch"] == "feat/projets"
     assert project["instructions_file"] == "AGENTS.md"

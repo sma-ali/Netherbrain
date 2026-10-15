@@ -177,8 +177,8 @@ async def _run_call(
     arguments = _arguments(call.arguments)
     summary = toolbox.describe(call.name, arguments or {})
     yield sse("tool_call", {"id": call.id, "name": call.name, "summary": summary})
-    # Pour une écriture : le diff de ce qui va changer, calculé avant de demander l'accord.
-    diff = await toolbox.preview(call.name, arguments) if arguments is not None else None
+    # Pour une écriture ou un commit : le diff de ce qui va changer, avant de demander l'accord.
+    diffs = await toolbox.preview(call.name, arguments) if arguments is not None else []
 
     if arguments is None:
         outcome, state = ToolResult("Arguments are not valid JSON.", error=True), "error"
@@ -202,7 +202,18 @@ async def _run_call(
             outcome, state = ToolResult(f"The user answered: {reply.answer}"), "done"
     else:
         reply = Reply("once")
-        if toolbox.needs_approval(call.name) and not approvals.allowed(conversation_id, call.name):
+        granted = approvals.folders(conversation_id)
+        # Hors du projet, ou un fichier de secrets : un accord en plus de celui de l'outil.
+        access = toolbox.access(call.name, arguments, granted)
+        tool_needed = toolbox.needs_approval(call.name) and not approvals.allowed(
+            conversation_id, call.name
+        )
+        if tool_needed or access is not None:
+            folder = access.folder if access else None
+            sensitive = access.sensitive if access else False
+            # Pas d'accord pour la suite : un secret, une commande (elle peut tout lire), ou le
+            # dossier personnel entier.
+            once_only = sensitive or toolbox.asks_every_time(call.name) or folder == toolbox.reach
             yield sse(
                 "tool_request",
                 {
@@ -211,15 +222,22 @@ async def _run_call(
                     "summary": summary,
                     "kind": "approval",
                     "arguments": arguments,
-                    **({"diff": diff.model_dump()} if diff else {}),
+                    **({"diffs": [diff.model_dump() for diff in diffs]} if diffs else {}),
+                    **({"folder": str(folder)} if folder else {}),
+                    **({"sensitive": True} if sensitive else {}),
+                    **({"once_only": True} if once_only else {}),
                 },
             )
             # Sans réponse à temps, c'est un refus.
-            reply = await approvals.wait(conversation_id, call.id, call.name) or Reply("deny")
+            reply = await approvals.wait(
+                conversation_id, call.id, call.name, folder=folder, once_only=once_only
+            ) or Reply("deny")
+            if folder is not None and reply.decision in ("once", "always"):
+                granted = [*granted, folder]  # ouvert au moins pour cet appel
         if reply.decision not in ("once", "always"):
             outcome, state = ToolResult("The user refused this action.", error=True), "denied"
         else:
-            outcome = await toolbox.run(call.name, arguments)
+            outcome = await toolbox.run(call.name, arguments, granted)
             state = "error" if outcome.error else "done"
 
     step = {
@@ -229,9 +247,9 @@ async def _run_call(
         "status": state,
         "output": outcome.output,
     }
-    if diff:
+    if diffs:
         # Gardé avec la réponse : l'historique montre ce que l'agent a changé.
-        step["diff"] = diff.model_dump()
+        step["diffs"] = [diff.model_dump() for diff in diffs]
     result.steps.append(step)
     yield sse("tool_result", step)
     # Le résultat repart vers le modèle sous forme de message « tool ».

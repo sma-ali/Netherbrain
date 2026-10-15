@@ -1,6 +1,7 @@
 """L'agent de code : ses outils, leurs autorisations, et la boucle qui les enchaîne."""
 
 import asyncio
+import subprocess
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -94,6 +95,7 @@ def test_the_model_reads_a_file_then_answers(client, workspace, use_providers, a
     assert (step["summary"], step["status"]) == ("read_file(app.py)", "done")
     assert "print('bonjour')" in step["output"]
     # Le modèle reçoit la liste des outils, puis le résultat comme message « tool ».
+    # Hors d'un dépôt Git, pas d'outils Git.
     assert [schema["function"]["name"] for schema in provider.tools] == [
         "list_files",
         "read_file",
@@ -157,7 +159,8 @@ def test_the_loop_stops_after_too_many_steps(client, workspace, use_providers, a
         ("read_file", "{oops", "not valid JSON"),
         ("delete_everything", "{}", "Unknown tool"),
         ("read_file", '{"nope": 1}', "Bad arguments"),
-        ("read_file", '{"path": "../secret.txt"}', "outside"),
+        ("read_file", '{"path": "/etc/hostname"}', "outside"),
+        ("read_file", '{"path": "../../secret.txt"}', "outside"),
     ],
 )
 def test_a_bad_call_is_reported_to_the_model(
@@ -202,7 +205,7 @@ def test_writing_a_file_waits_for_the_user(client, workspace, use_providers, app
     assert names(response) == ["tool_call", "tool_request", "tool_result", "token", "done"]
     assert (folder / "notes.md").read_text() == "salut"
     # La demande montrait le fichier à créer, avant qu'il existe.
-    diff = event_of(response, "tool_request")["diff"]
+    [diff] = event_of(response, "tool_request")["diffs"]
     assert (diff["created"], diff["lines"]) == (True, ["@@ -0,0 +1 @@", "+salut"])
 
 
@@ -221,10 +224,11 @@ def test_an_edit_shows_its_diff_and_keeps_it_in_the_history(
         response = streaming.result(timeout=10)
 
     expected = ["@@ -1,2 +1,2 @@", " x = 1", "-print(1)", "+print(2)"]
-    assert event_of(response, "tool_request")["diff"]["lines"] == expected
+    assert event_of(response, "tool_request")["diffs"][0]["lines"] == expected
     [step] = client.get(f"/api/conversations/{conversation_id}").json()["messages"][-1]["steps"]
-    assert (step["status"], step["diff"]["added"], step["diff"]["removed"]) == ("done", 1, 1)
-    assert step["diff"]["lines"] == expected
+    [diff] = step["diffs"]
+    assert (step["status"], diff["added"], diff["removed"]) == ("done", 1, 1)
+    assert diff["lines"] == expected
     assert (folder / "app.py").read_text() == "x = 1\nprint(2)\n"
 
 
@@ -434,11 +438,11 @@ def test_a_preview_changes_nothing_on_disk(tmp_path):
     (tmp_path / "app.py").write_text("a = 1\na = 1\n")
     toolbox = Toolbox(tmp_path)
 
-    created = preview(toolbox, "write_file", path="src/new.py", content="b = 2\n")
+    [created] = preview(toolbox, "write_file", path="src/new.py", content="b = 2\n")
     assert (created.created, created.lines) == (True, ["@@ -0,0 +1 @@", "+b = 2"])
     assert not (tmp_path / "src").exists()
 
-    replaced = preview(toolbox, "write_file", path="app.py", content="a = 1\n")
+    [replaced] = preview(toolbox, "write_file", path="app.py", content="a = 1\n")
     assert (replaced.created, replaced.removed) == (False, 1)
     assert (tmp_path / "app.py").read_text() == "a = 1\na = 1\n"
 
@@ -457,7 +461,7 @@ def test_a_preview_changes_nothing_on_disk(tmp_path):
 def test_no_preview_for_other_tools_or_doomed_calls(tmp_path, name, arguments):
     (tmp_path / "app.py").write_text("a = 1\na = 1\n")
 
-    assert preview(Toolbox(tmp_path), name, **arguments) is None
+    assert preview(Toolbox(tmp_path), name, **arguments) == []
 
 
 def test_commands_do_not_see_the_server_secrets(tmp_path, monkeypatch):
@@ -504,3 +508,115 @@ def test_the_output_is_truncated(tmp_path):
 
     assert len(output) < 200
     assert "truncated" in output
+
+
+# --- Git ---
+
+
+def git_repository(folder: Path, files: dict[str, str]) -> Toolbox:
+    """Un dépôt avec un premier commit, fait par l'agent lui-même."""
+    subprocess.run(["git", "init", "--quiet", "-b", "main"], cwd=folder, check=True)
+    for path, content in files.items():
+        (folder / path).write_text(content)
+    toolbox = Toolbox(folder)
+    assert run(toolbox, "git_commit", message="Premier commit").startswith("Committed")
+    return toolbox
+
+
+def names_of(toolbox: Toolbox) -> list[str]:
+    return [schema["function"]["name"] for schema in toolbox.schemas]
+
+
+def test_git_tools_are_only_offered_in_a_repository(tmp_path):
+    assert "git_status" not in names_of(Toolbox(tmp_path))
+
+    toolbox = git_repository(tmp_path, {"app.py": "print(1)\n"})
+
+    assert {"git_status", "git_diff", "git_log", "git_commit"} <= set(names_of(toolbox))
+    assert toolbox.needs_approval("git_commit")
+    assert not toolbox.needs_approval("git_diff")
+
+
+def test_the_agent_sees_what_changed_then_commits_it(tmp_path):
+    toolbox = git_repository(tmp_path, {"app.py": "print(1)\n"})
+    (tmp_path / "app.py").write_text("print(2)\n")
+    (tmp_path / "notes.md").write_text("# Notes\n")
+
+    status = run(toolbox, "git_status")
+    assert " M app.py" in status and "?? notes.md" in status
+    assert "-print(1)\n+print(2)" in run(toolbox, "git_diff", path="app.py")
+
+    # L'aperçu du commit : tous les fichiers, nouveaux compris, sans rien enregistrer.
+    changes = preview(toolbox, "git_commit", message="Afficher 2")
+    assert [(diff.path, diff.created, diff.added, diff.removed) for diff in changes] == [
+        ("app.py", False, 1, 1),
+        ("notes.md", True, 1, 0),
+    ]
+    assert "?? notes.md" in run(toolbox, "git_status")
+
+    output = run(toolbox, "git_commit", message="Afficher 2")
+
+    assert output.startswith("Committed") and "2 files changed" in output
+    assert run(toolbox, "git_status") == "## main"
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%an|%s"], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert log.stdout.strip() == "Netherbrain agent|Afficher 2"
+    assert "Nothing to commit" in run(toolbox, "git_commit", message="Rien")
+
+
+def test_a_commit_never_runs_the_repository_hooks(tmp_path):
+    toolbox = git_repository(tmp_path, {"app.py": "x = 1\n"})
+    # Un dépôt piégé : son hook s'exécuterait au commit, avec les droits de l'API.
+    hook = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\ntouch {tmp_path / 'pwned'}\n")
+    hook.chmod(0o755)
+    (tmp_path / "app.py").write_text("x = 2\n")
+
+    assert run(toolbox, "git_commit", message="Changer x").startswith("Committed")
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_git_diff_stays_inside_the_project(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    toolbox = git_repository(project, {"app.py": "x = 1\n"})
+
+    assert "outside" in run(toolbox, "git_diff", path="..")
+    assert "No commits yet." == run(Toolbox(_empty_repository(tmp_path / "vide")), "git_log")
+
+
+def _empty_repository(folder: Path) -> Path:
+    folder.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=folder, check=True)
+    return folder
+
+
+def test_a_commit_waits_for_the_user_who_sees_the_changes(
+    client, workspace, use_providers, approvals
+):
+    use_providers(
+        FakeProvider(
+            turns=[
+                [tool_call("git_commit", '{"message": "Ajouter les notes"}')],
+                [TokenEvent(content="C'est enregistré.")],
+            ]
+        )
+    )
+    conversation_id, folder = make_project(client, workspace, {"app.py": "x = 1\n"})
+    git_repository(folder, {})
+    (folder / "notes.md").write_text("# Notes\n")
+
+    with ThreadPoolExecutor(1) as pool:
+        streaming = pool.submit(ask, client, conversation_id)
+        call_id = wait_for_request(approvals, conversation_id)
+        # Rien n'est commité avant l'accord.
+        assert "notes.md" in run(Toolbox(folder), "git_status")
+        decide(client, conversation_id, call_id, "once")
+        response = streaming.result(timeout=10)
+
+    request = event_of(response, "tool_request")
+    assert request["summary"] == "git_commit(Ajouter les notes)"
+    assert [diff["path"] for diff in request["diffs"]] == ["notes.md"]
+    assert event_of(response, "tool_result")["status"] == "done"
+    assert run(Toolbox(folder), "git_status") == "## main"

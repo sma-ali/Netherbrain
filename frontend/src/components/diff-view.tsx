@@ -72,7 +72,13 @@ export function DiffView({ diff, className }: { diff: FileDiff; className?: stri
 }
 
 /** Le nombre de lignes ajoutées et retirées, comme sur GitHub : +12 −3. */
-export function DiffStats({ diff, className }: { diff: FileDiff; className?: string }) {
+export function DiffStats({
+  diff,
+  className,
+}: {
+  diff: { added: number; removed: number }
+  className?: string
+}) {
   return (
     <span className={cn("shrink-0 font-mono text-xs", className)}>
       <span className="text-emerald-600 dark:text-emerald-400">+{diff.added}</span>{" "}

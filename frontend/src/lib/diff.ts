@@ -1,5 +1,7 @@
 /** Lire un diff unifié (le format de `git diff`) pour l'afficher ligne à ligne, numéros compris. */
 
+import type { AgentStep, FileDiff } from "@/lib/api"
+
 export interface DiffRow {
   // hunk : en-tête d'un bloc ; add : ligne ajoutée ; remove : retirée ; context : inchangée.
   kind: "hunk" | "add" | "remove" | "context"
@@ -32,4 +34,17 @@ export function parseDiff(lines: string[]): DiffRow[] {
     }
   }
   return rows
+}
+
+/** Les fichiers modifiés par une étape de l'agent, quel que soit le format enregistré. */
+export function stepDiffs(step: AgentStep): FileDiff[] {
+  return step.diffs ?? (step.diff ? [step.diff] : [])
+}
+
+/** Le bilan de plusieurs fichiers : lignes ajoutées et retirées, au total. */
+export function totalChanges(diffs: FileDiff[]): { added: number; removed: number } {
+  return diffs.reduce(
+    (total, diff) => ({ added: total.added + diff.added, removed: total.removed + diff.removed }),
+    { added: 0, removed: 0 },
+  )
 }

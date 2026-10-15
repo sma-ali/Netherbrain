@@ -20,6 +20,7 @@ from netherbrain.db.models import EMBEDDING_DIMENSIONS
 from netherbrain.db.session import create_engine
 from netherbrain.projects.workspace import Workspace
 from netherbrain.providers import (
+    LlamaCppProvider,
     LLMProvider,
     OllamaProvider,
     OpenAICompatibleProvider,
@@ -40,10 +41,12 @@ OPENROUTER_HEADERS = {
 
 
 def build_registry(settings: Settings) -> ProviderRegistry:
-    """Ollama est toujours présent ; chaque fournisseur distant s'active avec sa clé d'API."""
+    """Ollama est toujours présent ; les autres s'activent avec leur clé d'API ou leur URL."""
     providers: list[LLMProvider] = [
         OllamaProvider(settings.ollama_base_url, context_length=settings.ollama_context_length),
     ]
+    if settings.llamacpp_base_url:
+        providers.append(LlamaCppProvider(settings.llamacpp_base_url))
     if key := _secret(settings.openrouter_api_key):
         providers.append(
             OpenAICompatibleProvider(
@@ -137,10 +140,20 @@ EmbedderDep = Annotated[Embedder, Depends(get_embedder)]
 
 @lru_cache
 def get_workspace() -> Workspace:
+    """L'ancien dossier de travail, base des chemins relatifs des premiers projets."""
     return Workspace(get_settings().workspace_root)
 
 
 WorkspaceDep = Annotated[Workspace, Depends(get_workspace)]
+
+
+@lru_cache
+def get_reach() -> Workspace:
+    """Le dossier atteignable : on y choisit un projet, l'agent y demande ses accès."""
+    return Workspace(get_settings().access_root)
+
+
+ReachDep = Annotated[Workspace, Depends(get_reach)]
 
 
 @lru_cache

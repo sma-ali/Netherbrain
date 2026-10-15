@@ -15,6 +15,7 @@ import { HistoryRow, HistoryUnavailable } from "@/components/history-list"
 import { Button } from "@/components/ui/button"
 import type { ConversationSummary, Project } from "@/lib/api"
 import { groupConversations } from "@/lib/projects"
+import { chatPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
 interface ConversationTreeProps {
@@ -66,6 +67,7 @@ export function ConversationTree({
       active={conversation.id === activeConversationId}
       onSelect={() => onSelect(conversation)}
       onDelete={onDelete}
+      href={chatPath(conversation.id)}
     />
   )
 
@@ -118,7 +120,9 @@ export function ConversationTree({
                         type="button"
                         onClick={() => toggle(project.id)}
                         aria-expanded={open}
-                        title={project.available ? project.path : `Folder not found: ${project.path}`}
+                        title={
+                          project.available ? project.path : `Folder not found: ${project.path}`
+                        }
                         className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-14 pl-1 text-left text-sm"
                       >
                         <ChevronRight

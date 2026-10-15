@@ -10,7 +10,7 @@ modèles distants via n'importe quelle API compatible OpenAI.
 
 ## Avancement
 
-Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des benchmarks en ligne**.
+Développement en cours. Jalon actuel : **un agent de code sûr et lisible**.
 
 - [x] Passerelle FastAPI qui streame les réponses d'Ollama (Server-Sent Events)
 - [x] Réflexion des modèles de raisonnement streamée à part de la réponse
@@ -27,6 +27,12 @@ Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des
 - [x] Projets, façon Claude Code : un dossier de code par projet, avec ses conversations et ses consignes (AGENTS.md)
 - [x] Agent de code : le modèle lit, cherche et modifie les fichiers du projet, chaque action sensible demandant votre accord
 - [x] Questions de l'agent, avec des réponses en un clic (outil `ask_user`)
+- [x] Images dans le chat, envoyées aux modèles qui savent les lire
+- [x] Diff de chaque écriture de l'agent, à relire avant d'autoriser
+- [x] Dossier de travail dédié, seul monté dans Docker ; commandes de l'agent sans les secrets
+- [x] Une adresse par conversation (`/c/<id>`) : rechargement, favoris, précédent / suivant
+- [x] Git pour l'agent : état, diff, historique, et commits sur autorisation, avec le diff de chaque fichier
+- [x] Fournisseur llama.cpp : les modèles locaux qu'Ollama ne sait pas lire (GGUF ternaires…)
 
 ## Architecture
 
@@ -34,7 +40,7 @@ Développement en cours. Jalon actuel : **conseiller de modèles, nourri par des
 Interface Next.js ──HTTP/SSE──> Passerelle FastAPI ──API compatible OpenAI──> Ollama (GPU local)
    (navigateur)                         │                                └──> OpenRouter, Groq (optionnels)
                                         ├──SQLAlchemy──> PostgreSQL + pgvector (historique, fichiers joints)
-                                        └──outils de l'agent──> dossier de travail (~/netherbrain-workspace)
+                                        └──outils de l'agent──> votre dossier personnel (avec votre accord)
 ```
 
 | Dossier     | Stack                                                                            |
@@ -68,6 +74,12 @@ la machine (le désactiver libère le GPU pour d'autres usages, comme les jeux).
 Les conversations sont stockées dans PostgreSQL, sur le volume `pgdata` : elles survivent aux
 redémarrages, mais `docker compose down -v` les efface. Les migrations s'appliquent
 automatiquement au démarrage de l'API.
+
+Chaque conversation a son adresse, `http://localhost:3000/c/<id>` : recharger la page y ramène,
+on peut la garder en favori ou l'ouvrir dans un nouvel onglet (clic du milieu dans la barre
+latérale), et les boutons précédent / suivant du navigateur passent d'une conversation à
+l'autre. Une nouvelle conversation dans un projet a l'adresse `/?project=<id>`. L'adresse change
+sans recharger la page (`history.pushState`, que Next.js synchronise avec son routeur).
 
 Le conteneur de l'API joint Ollama via `host.docker.internal`. Sous Linux, Ollama n'écoute par
 défaut que sur `127.0.0.1`, que les conteneurs ne peuvent pas joindre : définissez
@@ -156,27 +168,21 @@ Dans une conversation de projet, le modèle reçoit en message système le nom d
 contenu de la racine de son dossier et ses consignes : le fichier `AGENTS.md` (format ouvert,
 partagé par plusieurs outils de code) ou, à défaut, `CLAUDE.md`.
 
-Les projets sont choisis dans un **dossier de travail dédié**, `~/netherbrain-workspace` par
-défaut (`NETHERBRAIN_WORKSPACE_ROOT`) : chaque sous-dossier peut devenir un projet. On y met ce
-que l'agent a le droit de toucher, et rien d'autre : pas tous ses projets, et surtout pas un
-dossier qui contient des secrets. L'API n'accède jamais à rien en dehors : les chemins reçus
-sont résolus (`..`, liens symboliques compris) puis vérifiés. Supprimer un projet garde ses
-conversations et ne touche jamais au dossier.
+Un projet peut être **n'importe quel dossier de votre dossier personnel**
+(`NETHERBRAIN_ACCESS_ROOT`, `~` par défaut), comme dans Claude Code : rien à copier ni à
+cloner. Avant de l'ajouter, une étape demande d'**approuver le dossier** et rappelle ce que
+l'agent pourra y faire seul. L'API n'accède jamais à rien au-delà du dossier personnel : les
+chemins reçus sont résolus (`..`, liens symboliques compris) puis vérifiés. Supprimer un projet
+garde ses conversations et ne touche jamais au dossier.
 
-Avec Docker, **seul ce dossier** est monté dans le conteneur de l'API, sur `/workspace`
-(variable `NETHERBRAIN_WORKSPACE`). La limite ne dépend alors plus du code de l'API : le reste
-de la machine n'existe pas pour le conteneur. Le dossier doit exister avant le démarrage
-(sinon Docker le créerait en root, sans droit d'écriture) :
+Avec Docker, le dossier personnel est monté dans le conteneur de l'API **au même chemin** que
+sur la machine : `/home/moi/Projects/heretic` désigne le même dossier des deux côtés. Rien
+d'autre de la machine n'y est visible. Les projets créés avant ce changement, dans l'ancien
+dossier de travail (`NETHERBRAIN_WORKSPACE_ROOT`, `~/netherbrain-workspace`), continuent de
+marcher, à condition que ce dossier soit dans le dossier personnel : seul celui-ci est monté.
 
-```bash
-mkdir -p ~/netherbrain-workspace
-docker compose up --build
-```
-
-Sous WSL, il s'ouvre depuis l'Explorateur Windows à l'adresse
-`\\wsl.localhost\<distribution>\home\<utilisateur>\netherbrain-workspace` : on y dépose les
-fichiers à faire modifier par l'agent. Un fichier joint au chat, lui, n'est qu'une copie, lue
-mais jamais modifiable : le navigateur n'en transmet que le contenu, pas l'emplacement.
+Un fichier joint au chat, lui, n'est qu'une copie, lue mais jamais modifiable : le navigateur
+n'en transmet que le contenu, pas l'emplacement.
 
 ## Agent de code
 
@@ -185,7 +191,21 @@ donne au modèle des outils sur le dossier du projet : `list_files`, `read_file`
 `search_files` (lecture, exécutés directement), puis `write_file`, `edit_file` et `run_command`
 (modification, **soumis à votre accord**). Chaque appel s'affiche dans la réponse avec son
 résultat repliable ; une action sensible attend un clic : « Allow once », « Always allow »
-(pour toute la conversation) ou « Deny ».
+(pour toute la conversation) ou « Deny ». `run_command` n'a jamais « Always allow » : une
+commande peut lire n'importe quel fichier, secrets compris, elle se valide donc une à une.
+
+L'agent peut aussi **sortir de son projet**, mais jamais sans vous demander. Un chemin absolu
+ou commençant par `~` (`~/Projects/heretic/README.md`) vise un autre dossier : la demande
+affiche le dossier à ouvrir, le dépôt Git entier quand il y en a un, et propose « Allow once »,
+« Open heretic for this conversation » ou « Deny ». Une fois ouvert, le dossier se lit comme le
+projet ; y écrire demande toujours votre accord. Le dossier personnel entier ne s'ouvre jamais
+pour la conversation, seulement pour un appel. Les **fichiers de secrets** se redemandent à
+chaque fois, même dans un dossier ouvert : `.env`, clés privées (`id_ed25519`, `*.pem`…),
+`~/.ssh`, `~/.config/cles`, `~/.aws`, `~/.claude`, `~/.kube`, `.npmrc`, historiques du shell,
+et les fichiers qui feraient exécuter du code (`~/.bashrc`, `.git/hooks`, `.git/config`).
+`list_files` et `search_files` ne les lisent jamais, `git_diff` les laisse de côté, et un commit
+qui embarquerait un `.env` oublié par le `.gitignore` le signale, sans montrer son contenu.
+Les dossiers ouverts sont oubliés au redémarrage de l'API.
 
 Avant d'autoriser une écriture, on voit **exactement ce qui va changer** : un diff façon
 `git diff`, lignes retirées en rouge, ajoutées en vert, numérotées, avec 3 lignes de contexte.
@@ -195,6 +215,25 @@ plus tard ce que l'agent a modifié, fichier par fichier.
 Un septième outil, `ask_user`, permet au modèle de **vous poser une question** quand une
 décision vous revient : ses propositions s'affichent en boutons, et vous pouvez aussi taper
 votre propre réponse.
+
+Dans un dépôt Git, l'agent a aussi `git_status`, `git_diff` et `git_log` (lecture), et
+`git_commit`, soumis à votre accord : la demande affiche le message et le diff de **chaque
+fichier** qui sera enregistré, nouveaux fichiers compris. Les commits sont signés
+« Netherbrain agent », pour que l'historique dise qui a fait quoi. Git est lancé sans shell, avec
+une configuration neutre et **sans les hooks du dépôt** : un dépôt piégé ne peut pas exécuter de
+code au moment d'un commit. Ni push, ni checkout, ni reset : l'agent enregistre, vous décidez
+du reste.
+
+Pour faire travailler l'agent sur un de vos dépôts sans toucher au vrai, clonez-le à côté,
+sur une branche à lui, faites du clone un projet, puis récupérez son travail comme celui d'un
+collègue :
+
+```bash
+git clone ~/Projects/mon-app ~/netherbrain-workspace/mon-app
+git -C ~/netherbrain-workspace/mon-app switch -c agent
+# plus tard, depuis le vrai dépôt :
+git -C ~/Projects/mon-app pull ~/netherbrain-workspace/mon-app agent
+```
 
 ```
 Question → le modèle demande un outil → autorisation si nécessaire → exécution dans le dossier
@@ -279,6 +318,25 @@ gardées en base : chaque message renvoie l'historique au modèle, images compri
 - Chaque image coûte des centaines de tokens : seules les 8 plus récentes partent
   (`NETHERBRAIN_MAX_IMAGES_SENT`).
 
+## Modèles servis par llama.cpp
+
+Ollama ne lit que les formats de GGUF présents dans llama.cpp officiel. Pour les autres (les
+quantifications ternaires, par exemple), on lance soi-même `llama-server`, qui expose la même
+API qu'OpenAI, et on donne son adresse à Netherbrain :
+
+```bash
+llama-server -m modele.gguf --mmproj mmproj.gguf --jinja -ngl 99 -fa on -c 32768 \
+  --alias mon-modele --host 127.0.0.1 --port 8080
+# puis, dans backend/.env (ou LLAMACPP_BASE_URL pour Docker) :
+NETHERBRAIN_LLAMACPP_BASE_URL=http://localhost:8080/v1
+```
+
+Le fournisseur apparaît alors à côté d'Ollama, avec ses modèles. Comme `/v1/models` ne donne
+presque rien, Netherbrain interroge `/props` : il y lit la fenêtre de contexte, la vision
+(`modalities`) et l'appel d'outils, déduit du gabarit de discussion. Sans réponse de `/props`,
+le modèle reste utilisable, simplement sans ces détails. `--jinja` est nécessaire pour que
+llama.cpp accepte les outils, et `--mmproj` pour les images.
+
 ## Comparer des modèles
 
 La page `/compare` pose la même question à 2 à 4 modèles et affiche leurs réponses côte à côte,
@@ -349,7 +407,7 @@ ou en sélectionner plusieurs pour les comparer.
 | POST    | `/api/projects` | Crée un projet à partir d'un dossier (`{path, name}`)   |
 | GET     | `/api/projects/{id}` | Un projet                                          |
 | DELETE  | `/api/projects/{id}` | Oublie un projet (ses conversations et son dossier restent) |
-| GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier de travail, pour choisir un projet |
+| GET     | `/api/workspace/directories?path=` | Sous-dossiers du dossier personnel, pour choisir un projet |
 | GET     | `/api/catalog` | Fiches des modèles (taille, contexte, capacités) et mesures réelles |
 | POST    | `/api/advisor/recommend` | Recommande des modèles pour une demande (`{query}`), avec leurs raisons |
 | GET     | `/api/advisor/benchmarks` | État des benchmarks en ligne : configurés, nombre de modèles, date |

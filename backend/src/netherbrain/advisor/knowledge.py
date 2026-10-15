@@ -122,6 +122,19 @@ FAMILIES: list[FamilyProfile] = [
         },
     ),
     FamilyProfile(
+        # 27B ternaire (1,72 bit par poids) servi par llama.cpp : long contexte et outils.
+        "ternary-bonsai",
+        {
+            "summary": 5,
+            "agent": 4,
+            "reasoning": 4,
+            "code": 4,
+            "chat": 4,
+            "vision": 3,
+            "multilingual": 3,
+        },
+    ),
+    FamilyProfile(
         "gpt-oss",
         {
             "reasoning": 5,

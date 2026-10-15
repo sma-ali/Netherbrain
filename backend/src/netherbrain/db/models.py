@@ -39,8 +39,8 @@ class Project(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     name: Mapped[str] = mapped_column(String(200))
-    # Relatif au dossier de travail (NETHERBRAIN_WORKSPACE_ROOT), avec des « / ». Unique :
-    # un dossier n'appartient qu'à un seul projet.
+    # Absolu ; relatif à l'ancien dossier de travail (NETHERBRAIN_WORKSPACE_ROOT) pour les
+    # projets créés avant. Unique : un dossier n'appartient qu'à un seul projet.
     path: Mapped[str] = mapped_column(String(1024), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

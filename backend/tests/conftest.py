@@ -17,6 +17,7 @@ from netherbrain.api.deps import (
     get_approvals,
     get_benchmarks_client,
     get_embedder,
+    get_reach,
     get_registry,
     get_session_factory,
     get_workspace,
@@ -210,10 +211,14 @@ def use_embedder():
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
-    """Un dossier de travail jetable, à la place de ~/Projects, pendant le test en cours."""
+    """Un dossier jetable, à la place de votre dossier personnel, pendant le test en cours.
+
+    Il sert à la fois de dossier atteignable et d'ancien dossier de travail.
+    """
     root = tmp_path / "workspace"
     root.mkdir()
     app.dependency_overrides[get_workspace] = lambda: Workspace(root)
+    app.dependency_overrides[get_reach] = lambda: Workspace(root)
     return root
 
 

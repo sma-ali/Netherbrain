@@ -78,27 +78,54 @@ interface HistoryRowProps {
   active: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  /** L'adresse de l'élément : la ligne devient un lien, qu'on peut ouvrir dans un nouvel onglet. */
+  href?: string
 }
 
 /** Une ligne de l'historique : cliquer l'ouvre, la corbeille (visible au survol) la supprime. */
-export function HistoryRow({ item, active, onSelect, onDelete }: HistoryRowProps) {
+export function HistoryRow({ item, active, onSelect, onDelete, href }: HistoryRowProps) {
+  const className = cn(
+    "flex w-full flex-col rounded-md py-1.5 pr-8 pl-2 text-left hover:bg-accent",
+    active && "bg-accent",
+  )
+  const label = (
+    <>
+      <span className="truncate text-sm">{item.title}</span>
+      {item.subtitle && (
+        <span className="truncate text-xs text-muted-foreground">{item.subtitle}</span>
+      )}
+    </>
+  )
+
   return (
     <li className="group relative">
-      <button
-        type="button"
-        onClick={() => onSelect(item.id)}
-        aria-current={active ? "page" : undefined}
-        title={item.title}
-        className={cn(
-          "flex w-full flex-col rounded-md py-1.5 pr-8 pl-2 text-left hover:bg-accent",
-          active && "bg-accent",
-        )}
-      >
-        <span className="truncate text-sm">{item.title}</span>
-        {item.subtitle && (
-          <span className="truncate text-xs text-muted-foreground">{item.subtitle}</span>
-        )}
-      </button>
+      {href ? (
+        <a
+          href={href}
+          onClick={(event) => {
+            // Ctrl, Cmd, Maj ou clic du milieu : le navigateur ouvre un nouvel onglet, comme
+            // pour tout lien. Un clic simple, lui, ouvre la conversation sans recharger la page.
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return
+            event.preventDefault()
+            onSelect(item.id)
+          }}
+          aria-current={active ? "page" : undefined}
+          title={item.title}
+          className={className}
+        >
+          {label}
+        </a>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onSelect(item.id)}
+          aria-current={active ? "page" : undefined}
+          title={item.title}
+          className={className}
+        >
+          {label}
+        </button>
+      )}
       <button
         type="button"
         onClick={() => onDelete(item.id)}
