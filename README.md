@@ -1,12 +1,34 @@
 # Netherbrain
 
 [![CI](https://github.com/sma-ali/Netherbrain/actions/workflows/ci.yml/badge.svg)](https://github.com/sma-ali/Netherbrain/actions/workflows/ci.yml)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+![Python 3.14](https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white)
+![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs)
 
 > Many minds, one interface.
 
-Netherbrain est une plateforme de chat auto-hébergeable qui orchestre plusieurs LLM open source :
-des modèles locaux qui tournent sur votre propre GPU via [Ollama](https://ollama.com), et des
-modèles distants via n'importe quelle API compatible OpenAI.
+**Une seule interface de chat, auto-hébergée, pour des LLM locaux (Ollama, llama.cpp) et distants
+(OpenRouter, Groq), avec un agent de code qui modifie vos projets sous votre contrôle.**
+Chaque action sensible de l'agent (écriture, commande, fichier de secrets) attend votre accord,
+avec le diff exact sous les yeux.
+
+<!-- Capture d'écran : ajouter docs/capture.png (ou un GIF) puis décommenter la ligne suivante.
+![Netherbrain : un projet ouvert, l'agent propose une modification avec son diff](docs/capture.png)
+-->
+
+## Points techniques
+
+- **Streaming de bout en bout** : FastAPI renvoie les tokens en Server-Sent Events, le navigateur
+  les lit depuis un `fetch` avec un parseur incrémental ; la réflexion des modèles de
+  raisonnement arrive à part.
+- **Fournisseurs interchangeables** : la couche API ne connaît qu'une interface `LLMProvider` ;
+  un fournisseur injoignable est signalé, les autres continuent.
+- **RAG** : fichiers joints découpés et vectorisés dans PostgreSQL + pgvector, seuls les
+  passages utiles partent au modèle.
+- **Agent de code confiné** : chemins verrouillés dans le dossier autorisé (ni `..`, ni lien
+  symbolique), secrets redemandés à chaque fois, commandes lancées sans les variables secrètes.
+- **Industrialisation** : migrations Alembic, images Docker multi-étapes non-root, plus de
+  300 tests (pytest, Vitest) et une CI GitHub Actions en trois jobs.
 
 ## Avancement
 
@@ -62,6 +84,7 @@ Prérequis : Docker avec Compose, et [Ollama](https://ollama.com) qui tourne sur
 avec au moins un modèle (`ollama pull qwen3:8b`).
 
 ```bash
+cp .env.example .env         # facultatif : mot de passe de la base, adresse d'Ollama
 docker compose up --build
 ```
 
@@ -131,6 +154,19 @@ cp .env.example .env         # .env est ignoré par git
 Redémarrez l'API après avoir modifié `.env`. Si un fournisseur est injoignable (pas d'internet,
 panne, clé invalide), il est signalé comme indisponible et tous les autres modèles continuent de
 fonctionner.
+
+### Tests et CI
+
+La CI GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) tourne à chaque
+push sur `master` et à chaque pull request, en trois jobs :
+
+| Job | Ce qu'il vérifie |
+|-----|------------------|
+| Backend | `ruff format --check`, `ruff check`, migrations Alembic puis pytest sur un vrai PostgreSQL + pgvector |
+| Frontend | ESLint, Vitest, build de production Next.js (vérification des types comprise) |
+| Docker | `docker compose build` des deux images, une fois les deux premiers jobs verts |
+
+Les actions sont épinglées par hash de commit et mises à jour par Dependabot.
 
 ### Développement
 
@@ -428,3 +464,7 @@ alors votre autorisation, envoyée par une autre requête) et `tool_result`.
 - `/api/conversations/{id}/messages` ne reçoit que le nouveau message (`{provider, model, content}`) :
   le serveur reconstitue l'historique depuis la base. Si le client se déconnecte en pleine
   réponse, ce qui a déjà été généré est tout de même enregistré.
+
+## Licence
+
+[MIT](LICENSE)

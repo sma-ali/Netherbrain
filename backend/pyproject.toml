@@ -3,7 +3,7 @@ name = "netherbrain-backend"
 version = "0.1.0"
 description = "Netherbrain API: a gateway that streams chat completions from multiple LLM providers"
 authors = [
-    { name = "Ali", email = "" }
+    { name = "Ali" }
 ]
 requires-python = ">=3.14"
 dependencies = [
