@@ -24,3 +24,19 @@ next-env.d.ts
 .idea/
 .DS_Store
 Thumbs.db
+.mypy_cache/
+coverage/
+
+# Bases locales, journaux
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Modèles et fichiers lourds
+/models/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.onnx
