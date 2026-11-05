@@ -12,9 +12,7 @@
 Chaque action sensible de l'agent (écriture, commande, fichier de secrets) attend votre accord,
 avec le diff exact sous les yeux.
 
-<!-- Capture d'écran : ajouter docs/capture.png (ou un GIF) puis décommenter la ligne suivante.
-![Netherbrain : un projet ouvert, l'agent propose une modification avec son diff](docs/capture.png)
--->
+![Netherbrain : l'agent propose une modification avec son diff et attend l'accord](docs/capture.png)
 
 ## Points techniques
 
